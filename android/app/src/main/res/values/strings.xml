@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Single source of truth for the Android app label. Change this one line to rename the app. -->
+    <string name="app_name">Handwriting to Text</string>
+</resources>

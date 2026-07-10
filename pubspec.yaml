@@ -1,0 +1,49 @@
+name: handwriting_to_text
+description: "Offline handwriting to text converter."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # OCR (fully on-device / offline)
+  google_mlkit_text_recognition: ^0.15.0
+
+  # Capture & image handling
+  image_picker: ^1.1.2
+  image_cropper: ^8.0.2
+  image: ^4.2.0
+
+  # Local storage
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  shared_preferences: ^2.3.2
+  path_provider: ^2.1.4
+
+  # Permissions
+  permission_handler: ^11.3.1
+
+  # Export
+  pdf: ^3.11.1
+  archive: ^3.6.1
+  share_plus: ^10.1.2
+
+  # State management & utils
+  provider: ^6.1.2
+  uuid: ^4.5.1
+  intl: ^0.19.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
