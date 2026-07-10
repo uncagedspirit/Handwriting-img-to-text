@@ -49,3 +49,13 @@ android {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // Non-Latin ML Kit script models are compileOnly in the plugin itself,
+    // so the app must pull them in explicitly to support all recognition
+    // languages exposed in Settings.
+    implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
+    implementation("com.google.mlkit:text-recognition-devanagari:16.0.1")
+    implementation("com.google.mlkit:text-recognition-japanese:16.0.1")
+    implementation("com.google.mlkit:text-recognition-korean:16.0.1")
+}
