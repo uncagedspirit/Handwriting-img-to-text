@@ -24,8 +24,9 @@ android {
         applicationId = "com.handwriting.texter.handwriting_to_text"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        // minSdk 23 is required by the on-device ML Kit text recognition engine.
-        minSdk = 23
+        // Flutter's default minSdk (24) already satisfies the minSdk 23
+        // required by the on-device ML Kit text recognition engine.
+        minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
