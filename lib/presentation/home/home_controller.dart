@@ -40,6 +40,7 @@ class HomeController extends ChangeNotifier {
         suggestion: outcome == PermissionOutcome.permanentlyDenied
             ? 'Enable it from your phone Settings.'
             : 'Allow camera access when prompted.',
+        requiresAppSettings: outcome == PermissionOutcome.permanentlyDenied,
       );
     }
     return _capture.captureFromCamera();
@@ -48,4 +49,6 @@ class HomeController extends ChangeNotifier {
   Future<List<String>> pickFromGallery({bool allowMultiple = true}) async {
     return _capture.pickFromGallery(allowMultiple: allowMultiple);
   }
+
+  Future<void> openAppSettings() => _permissions.openSettings();
 }

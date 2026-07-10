@@ -48,7 +48,17 @@ class _HomeViewState extends State<_HomeView> {
       final path = await controller.captureFromCamera();
       if (path != null) setState(() => _stagedImages.add(path));
     } on AppException catch (e) {
-      if (mounted) AppSnackBar.error(context, e.message);
+      if (!mounted) return;
+      if (e.requiresAppSettings) {
+        AppSnackBar.errorWithAction(
+          context,
+          e.message,
+          actionLabel: 'Open Settings',
+          onAction: controller.openAppSettings,
+        );
+      } else {
+        AppSnackBar.error(context, e.message);
+      }
     }
   }
 
