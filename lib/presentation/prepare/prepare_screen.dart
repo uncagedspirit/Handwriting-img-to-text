@@ -10,7 +10,6 @@ import '../../core/utils/file_storage.dart';
 import '../../core/utils/image_enhancer.dart';
 import '../../core/widgets/app_button.dart';
 import '../../data/datasources/crop_datasource.dart';
-import '../../data/repositories/settings_repository.dart';
 import '../../domain/entities/app_enums.dart';
 import '../processing/processing_args.dart';
 import 'prepare_controller.dart';
@@ -47,7 +46,6 @@ class _PrepareViewState extends State<_PrepareView> {
 
   Future<void> _proceed() async {
     final controller = context.read<PrepareController>();
-    final settings = locator<SettingsRepository>();
 
     var batchMode = BatchMode.merge;
     if (controller.pages.length > 1) {
@@ -56,7 +54,7 @@ class _PrepareViewState extends State<_PrepareView> {
       batchMode = chosen;
     }
 
-    final finalPaths = await controller.finalizeAll(autoEnhance: settings.imageEnhancementEnabled);
+    final finalPaths = controller.finalizeAll();
     if (!mounted) return;
 
     await Navigator.of(context).pushReplacementNamed(

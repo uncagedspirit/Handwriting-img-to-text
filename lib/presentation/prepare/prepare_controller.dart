@@ -120,19 +120,9 @@ class PrepareController extends ChangeNotifier {
     }
   }
 
-  /// Applies automatic enhancement (if enabled) to every page and returns
-  /// the final image paths, ready for recognition.
-  Future<List<String>> finalizeAll({required bool autoEnhance}) async {
-    final results = <String>[];
-    for (final page in pages) {
-      if (autoEnhance) {
-        final outputPath = await _newTempPath();
-        final enhanced = await _enhancer.autoEnhance(File(page.workingPath), outputPath);
-        results.add(enhanced.path);
-      } else {
-        results.add(page.workingPath);
-      }
-    }
-    return results;
-  }
+  /// The working image path for every page, in order. Auto-enhancement (if
+  /// enabled) runs later on the processing screen so tapping "Recognize
+  /// Text" navigates immediately instead of leaving the button looking dead
+  /// while heavy image work happens silently.
+  List<String> finalizeAll() => pages.map((p) => p.workingPath).toList();
 }

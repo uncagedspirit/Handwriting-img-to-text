@@ -78,10 +78,14 @@ Uint8List _autoEnhanceBytes(Uint8List bytes) {
   final decoded = img.decodeImage(bytes);
   if (decoded == null) return bytes;
 
-  var image = img.copyResize(decoded, width: decoded.width > 2400 ? 2400 : decoded.width);
-  image = img.adjustColor(image, contrast: 1.18, brightness: 1.04, saturation: 1.0);
-  image = img.convolution(image, filter: [0, -1, 0, -1, 5, -1, 0, -1, 0], div: 1);
-  return Uint8List.fromList(img.encodeJpg(image, quality: 92));
+  // Keep this gentle: a strong contrast boost can blow out faint pencil
+  // strokes, and a full-strength sharpen kernel amplifies JPEG noise into
+  // halos around letterforms — both make OCR worse, not better. `amount`
+  // blends the sharpened result with the original instead of replacing it.
+  var image = img.copyResize(decoded, width: decoded.width > 3200 ? 3200 : decoded.width);
+  image = img.adjustColor(image, contrast: 1.08, saturation: 1.0);
+  image = img.convolution(image, filter: [0, -1, 0, -1, 5, -1, 0, -1, 0], div: 1, amount: 0.35);
+  return Uint8List.fromList(img.encodeJpg(image, quality: 95));
 }
 
 Uint8List _applyManualAdjustments(_ManualAdjustArgs args) {

@@ -6,6 +6,7 @@ import '../../core/routing/app_routes.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/utils/file_storage.dart';
+import '../../core/utils/image_enhancer.dart';
 import '../../core/widgets/app_button.dart';
 import '../../core/widgets/empty_state.dart';
 import '../../data/datasources/text_recognition_datasource.dart';
@@ -31,6 +32,7 @@ class ProcessingScreen extends StatelessWidget {
         historyRepository: locator<HistoryRepository>(),
         settingsRepository: locator<SettingsRepository>(),
         fileStorage: locator<FileStorage>(),
+        imageEnhancer: locator<ImageEnhancer>(),
       )..run(),
       child: const _ProcessingView(),
     );
@@ -65,8 +67,13 @@ class _ProcessingView extends StatelessWidget {
       case ProcessingStage.preparing:
       case ProcessingStage.recognizing:
       case ProcessingStage.saving:
-        final total = controller.imagePaths.length;
-        final progress = total == 0 ? 0.0 : controller.completedPages / total;
+        final total = controller.totalSteps;
+        final progress = total == 0 ? 0.0 : controller.completedSteps / total;
+        final stageLabel = switch (controller.stage) {
+          ProcessingStage.preparing => 'Enhancing your pages',
+          ProcessingStage.saving => 'Saving your document',
+          _ => 'Reading your handwriting',
+        };
         return Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -85,14 +92,11 @@ class _ProcessingView extends StatelessWidget {
               ),
             ),
             const SizedBox(height: AppSpacing.xl),
-            Text(
-              controller.stage == ProcessingStage.saving ? 'Saving your document' : 'Reading your handwriting',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
+            Text(stageLabel, style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: AppSpacing.xs),
             Text(
               total > 1
-                  ? 'Page ${controller.completedPages.clamp(0, total)} of $total'
+                  ? 'Step ${controller.completedSteps.clamp(0, total)} of $total'
                   : 'This only takes a moment',
               style: Theme.of(context).textTheme.bodyMedium,
             ),

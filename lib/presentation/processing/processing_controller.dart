@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 import '../../core/utils/app_exception.dart';
 import '../../core/utils/file_storage.dart';
+import '../../core/utils/image_enhancer.dart';
 import '../../data/datasources/text_recognition_datasource.dart';
 import '../../data/repositories/history_repository.dart';
 import '../../data/repositories/settings_repository.dart';
@@ -24,10 +25,12 @@ class ProcessingController extends ChangeNotifier {
     required HistoryRepository historyRepository,
     required SettingsRepository settingsRepository,
     required FileStorage fileStorage,
+    required ImageEnhancer imageEnhancer,
   })  : _recognizer = recognizer,
         _history = historyRepository,
         _settings = settingsRepository,
-        _storage = fileStorage;
+        _storage = fileStorage,
+        _enhancer = imageEnhancer;
 
   final List<String> imagePaths;
   final String documentTitle;
@@ -37,10 +40,12 @@ class ProcessingController extends ChangeNotifier {
   final HistoryRepository _history;
   final SettingsRepository _settings;
   final FileStorage _storage;
+  final ImageEnhancer _enhancer;
   final _uuid = const Uuid();
 
   ProcessingStage stage = ProcessingStage.preparing;
-  int completedPages = 0;
+  int totalSteps = 0;
+  int completedSteps = 0;
   String? errorMessage;
   String? errorSuggestion;
 
@@ -51,7 +56,13 @@ class ProcessingController extends ChangeNotifier {
   List<ScanDocument> resultDocuments = const [];
 
   Future<void> run() async {
-    stage = ProcessingStage.recognizing;
+    // One step per page for enhancement (if enabled) plus one per page for
+    // recognition, so the progress bar reflects the whole pipeline and never
+    // sits still while heavy work happens off-screen.
+    final autoEnhance = _settings.imageEnhancementEnabled;
+    totalSteps = imagePaths.length * (autoEnhance ? 2 : 1);
+    completedSteps = 0;
+    stage = ProcessingStage.preparing;
     notifyListeners();
 
     final language = _settings.recognitionLanguage;
@@ -60,7 +71,25 @@ class ProcessingController extends ChangeNotifier {
     final pages = <ScanPage>[];
 
     try {
+      final readyPaths = <String>[];
       for (final path in imagePaths) {
+        if (autoEnhance) {
+          final dir = await _storage.tempDir;
+          final outputPath = '${dir.path}/${_uuid.v4()}.jpg';
+          final enhanced = await _enhancer.autoEnhance(File(path), outputPath);
+          readyPaths.add(enhanced.path);
+          await _storage.deleteIfExists(path);
+        } else {
+          readyPaths.add(path);
+        }
+        completedSteps++;
+        notifyListeners();
+      }
+
+      stage = ProcessingStage.recognizing;
+      notifyListeners();
+
+      for (final path in readyPaths) {
         String text;
         bool failed = false;
         try {
@@ -78,7 +107,7 @@ class ProcessingController extends ChangeNotifier {
           hasRecognitionFailed: failed,
         ));
 
-        completedPages++;
+        completedSteps++;
         notifyListeners();
       }
 
