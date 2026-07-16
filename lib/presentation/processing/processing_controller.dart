@@ -71,16 +71,17 @@ class ProcessingController extends ChangeNotifier {
     final pages = <ScanPage>[];
 
     try {
-      final readyPaths = <String>[];
+      // Each entry pairs the untouched capture with its enhanced variant
+      // (when enhancement is on) so recognition can try both.
+      final candidates = <(String original, String? enhanced)>[];
       for (final path in imagePaths) {
         if (autoEnhance) {
           final dir = await _storage.tempDir;
           final outputPath = '${dir.path}/${_uuid.v4()}.jpg';
           final enhanced = await _enhancer.autoEnhance(File(path), outputPath);
-          readyPaths.add(enhanced.path);
-          await _storage.deleteIfExists(path);
+          candidates.add((path, enhanced.path));
         } else {
-          readyPaths.add(path);
+          candidates.add((path, null));
         }
         completedSteps++;
         notifyListeners();
@@ -89,17 +90,39 @@ class ProcessingController extends ChangeNotifier {
       stage = ProcessingStage.recognizing;
       notifyListeners();
 
-      for (final path in readyPaths) {
+      for (final (originalPath, enhancedPath) in candidates) {
         String text;
+        String winningPath;
         bool failed = false;
         try {
-          text = await _recognizer.recognize(path, language);
+          // Dual-pass: enhancement helps dim or low-contrast pages but can
+          // hurt clean ones, so run OCR on both variants and keep whichever
+          // actually read more text.
+          final originalText = await _recognizer.tryRecognize(originalPath, language);
+          final enhancedText = enhancedPath == null
+              ? ''
+              : await _recognizer.tryRecognize(enhancedPath, language);
+
+          if (_recognitionScore(enhancedText) > _recognitionScore(originalText)) {
+            text = enhancedText;
+            winningPath = enhancedPath!;
+          } else {
+            text = originalText;
+            winningPath = originalPath;
+          }
+          failed = text.trim().isEmpty;
         } on AppException {
           text = '';
+          winningPath = originalPath;
           failed = true;
         }
 
-        final persistedPath = await _persistPage(path, keepOriginal);
+        final persistedPath = await _persistPage(winningPath, keepOriginal);
+        // Clean up whichever variant was not persisted.
+        for (final path in [originalPath, ?enhancedPath]) {
+          if (path != winningPath) await _storage.deleteIfExists(path);
+        }
+
         pages.add(ScanPage(
           id: _uuid.v4(),
           imagePath: persistedPath,
@@ -152,6 +175,11 @@ class ProcessingController extends ChangeNotifier {
     }
     notifyListeners();
   }
+
+  /// Scores a recognition result for the dual-pass comparison: the count of
+  /// non-whitespace characters, so partial reads lose to fuller ones and
+  /// whitespace differences don't skew the choice.
+  int _recognitionScore(String text) => text.replaceAll(RegExp(r'\s'), '').length;
 
   Future<String> _persistPage(String workingPath, bool keepOriginal) async {
     if (!keepOriginal) {
