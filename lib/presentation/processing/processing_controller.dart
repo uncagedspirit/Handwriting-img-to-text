@@ -71,18 +71,20 @@ class ProcessingController extends ChangeNotifier {
     final pages = <ScanPage>[];
 
     try {
-      // Each entry pairs the untouched capture with its enhanced variant
-      // (when enhancement is on) so recognition can try both.
-      final candidates = <(String original, String? enhanced)>[];
+      // Each page gets a set of variants for recognition to try: the
+      // untouched capture, plus (when enhancement is on) an adaptively
+      // enhanced version and an adaptively binarized version. Different
+      // page conditions favor different variants.
+      final candidates = <List<String>>[];
       for (final path in imagePaths) {
+        final variants = [path];
         if (autoEnhance) {
           final dir = await _storage.tempDir;
-          final outputPath = '${dir.path}/${_uuid.v4()}.jpg';
-          final enhanced = await _enhancer.autoEnhance(File(path), outputPath);
-          candidates.add((path, enhanced.path));
-        } else {
-          candidates.add((path, null));
+          final enhanced = await _enhancer.autoEnhance(File(path), '${dir.path}/${_uuid.v4()}.jpg');
+          final binarized = await _enhancer.binarize(File(path), '${dir.path}/${_uuid.v4()}.jpg');
+          variants.addAll([enhanced.path, binarized.path]);
         }
+        candidates.add(variants);
         completedSteps++;
         notifyListeners();
       }
@@ -90,43 +92,61 @@ class ProcessingController extends ChangeNotifier {
       stage = ProcessingStage.recognizing;
       notifyListeners();
 
-      for (final (originalPath, enhancedPath) in candidates) {
-        String text;
-        String winningPath;
-        bool failed = false;
+      for (final variants in candidates) {
+        final originalPath = variants.first;
+        var best = RecognitionOutcome.empty;
+        var winningPath = originalPath;
+        var failed = false;
         try {
-          // Dual-pass: enhancement helps dim or low-contrast pages but can
-          // hurt clean ones, so run OCR on both variants and keep whichever
-          // actually read more text.
-          final originalText = await _recognizer.tryRecognize(originalPath, language);
-          final enhancedText = enhancedPath == null
-              ? ''
-              : await _recognizer.tryRecognize(enhancedPath, language);
-
-          if (_recognitionScore(enhancedText) > _recognitionScore(originalText)) {
-            text = enhancedText;
-            winningPath = enhancedPath!;
-          } else {
-            text = originalText;
-            winningPath = originalPath;
+          for (final path in variants) {
+            final outcome = await _recognizer.tryRecognize(path, language);
+            if (outcome.score > best.score) {
+              best = outcome;
+              winningPath = path;
+            }
           }
-          failed = text.trim().isEmpty;
+
+          // Nothing readable in any variant: the page may simply be
+          // sideways or upside down (e.g. an import with no orientation
+          // metadata), so retry the original at each remaining rotation.
+          if (best.text.trim().isEmpty) {
+            final dir = await _storage.tempDir;
+            for (final degrees in const [90, 180, 270]) {
+              final rotated = await _enhancer.rotate(
+                File(originalPath),
+                '${dir.path}/${_uuid.v4()}.jpg',
+                degrees,
+              );
+              final outcome = await _recognizer.tryRecognize(rotated.path, language);
+              if (outcome.score > best.score) {
+                if (!variants.contains(winningPath)) {
+                  await _storage.deleteIfExists(winningPath);
+                }
+                best = outcome;
+                winningPath = rotated.path;
+              } else {
+                await _storage.deleteIfExists(rotated.path);
+              }
+            }
+          }
+
+          failed = best.text.trim().isEmpty;
         } on AppException {
-          text = '';
-          winningPath = originalPath;
           failed = true;
         }
 
         final persistedPath = await _persistPage(winningPath, keepOriginal);
-        // Clean up whichever variant was not persisted.
-        for (final path in [originalPath, ?enhancedPath]) {
-          if (path != winningPath) await _storage.deleteIfExists(path);
+        // _persistPage works on a copy, so every working file — losing
+        // variants, a rotation-fallback original, and the winner itself —
+        // can be removed from temp storage.
+        for (final path in {...variants, winningPath}) {
+          await _storage.deleteIfExists(path);
         }
 
         pages.add(ScanPage(
           id: _uuid.v4(),
           imagePath: persistedPath,
-          recognizedText: text,
+          recognizedText: best.text,
           hasRecognitionFailed: failed,
         ));
 
@@ -175,11 +195,6 @@ class ProcessingController extends ChangeNotifier {
     }
     notifyListeners();
   }
-
-  /// Scores a recognition result for the dual-pass comparison: the count of
-  /// non-whitespace characters, so partial reads lose to fuller ones and
-  /// whitespace differences don't skew the choice.
-  int _recognitionScore(String text) => text.replaceAll(RegExp(r'\s'), '').length;
 
   Future<String> _persistPage(String workingPath, bool keepOriginal) async {
     if (!keepOriginal) {
