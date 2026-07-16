@@ -46,6 +46,18 @@ class ImageEnhancer {
     return output;
   }
 
+  /// Produces a black-and-white version using adaptive (locally computed)
+  /// thresholding. This strips ruled lines, shadows and paper texture that
+  /// confuse recognition, and often rescues faint pencil or uneven lighting
+  /// that global adjustments can't fix.
+  Future<File> binarize(File source, String outputPath) async {
+    final bytes = await source.readAsBytes();
+    final result = await compute(_binarizeBytes, bytes);
+    final output = File(outputPath);
+    await output.writeAsBytes(result, flush: true);
+    return output;
+  }
+
   /// Applies manual brightness/contrast on top of the original image.
   Future<File> applyManualAdjustments(
     File source,
@@ -74,11 +86,26 @@ class ImageEnhancer {
   }
 }
 
-Uint8List _autoEnhanceBytes(Uint8List bytes) {
+/// Decodes, bakes the EXIF orientation into the pixels (re-encoded copies
+/// lose the EXIF tag, so an un-baked photo would come out sideways), and
+/// normalizes size: huge captures are downscaled for speed while small
+/// imports are upscaled 2x because the recognizer struggles when text is
+/// only a few pixels tall.
+img.Image? _prepareBase(Uint8List bytes) {
   final decoded = img.decodeImage(bytes);
-  if (decoded == null) return bytes;
+  if (decoded == null) return null;
+  var image = img.bakeOrientation(decoded);
+  if (image.width > 3200) {
+    image = img.copyResize(image, width: 3200);
+  } else if (image.width < 1200) {
+    image = img.copyResize(image, width: image.width * 2, interpolation: img.Interpolation.cubic);
+  }
+  return image;
+}
 
-  var image = img.copyResize(decoded, width: decoded.width > 3200 ? 3200 : decoded.width);
+Uint8List _autoEnhanceBytes(Uint8List bytes) {
+  var image = _prepareBase(bytes);
+  if (image == null) return bytes;
 
   // Grayscale removes color noise the recognizer doesn't need, then a
   // percentile-based levels stretch adapts to the photo's actual lighting:
@@ -89,6 +116,53 @@ Uint8List _autoEnhanceBytes(Uint8List bytes) {
   image = img.grayscale(image);
   image = _stretchLevels(image, lowPercentile: 0.02, highPercentile: 0.98);
   image = img.convolution(image, filter: [0, -1, 0, -1, 5, -1, 0, -1, 0], div: 1, amount: 0.3);
+  return Uint8List.fromList(img.encodeJpg(image, quality: 95));
+}
+
+Uint8List _binarizeBytes(Uint8List bytes) {
+  var image = _prepareBase(bytes);
+  if (image == null) return bytes;
+  image = img.grayscale(image);
+
+  // Adaptive mean thresholding: each pixel is compared against the average
+  // brightness of its local window (computed in O(1) per pixel via an
+  // integral image), so shadows and uneven lighting don't matter the way
+  // they would with one global threshold. The small negative offset keeps
+  // pale paper texture from being classified as ink.
+  final width = image.width;
+  final height = image.height;
+  final integral = List<int>.filled((width + 1) * (height + 1), 0);
+  final stride = width + 1;
+  for (var y = 0; y < height; y++) {
+    var rowSum = 0;
+    for (var x = 0; x < width; x++) {
+      rowSum += image.getPixel(x, y).r.toInt();
+      integral[(y + 1) * stride + (x + 1)] = integral[y * stride + (x + 1)] + rowSum;
+    }
+  }
+
+  final window = (width / 16).round().clamp(15, 80);
+  const offset = 10;
+  final half = window ~/ 2;
+  for (var y = 0; y < height; y++) {
+    final y0 = (y - half).clamp(0, height - 1);
+    final y1 = (y + half).clamp(0, height - 1);
+    for (var x = 0; x < width; x++) {
+      final x0 = (x - half).clamp(0, width - 1);
+      final x1 = (x + half).clamp(0, width - 1);
+      final area = (x1 - x0 + 1) * (y1 - y0 + 1);
+      final sum = integral[(y1 + 1) * stride + (x1 + 1)] -
+          integral[y0 * stride + (x1 + 1)] -
+          integral[(y1 + 1) * stride + x0] +
+          integral[y0 * stride + x0];
+      final pixel = image.getPixel(x, y);
+      final value = pixel.r.toInt() * area < (sum - offset * area) ? 0 : 255;
+      pixel
+        ..r = value
+        ..g = value
+        ..b = value;
+    }
+  }
   return Uint8List.fromList(img.encodeJpg(image, quality: 95));
 }
 
