@@ -3,6 +3,24 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 import '../../core/utils/app_exception.dart';
 import '../../domain/entities/app_enums.dart';
 
+/// The result of one recognition pass over one image variant.
+class RecognitionOutcome {
+  const RecognitionOutcome({required this.text, required this.confidence});
+
+  static const empty = RecognitionOutcome(text: '', confidence: 0);
+
+  final String text;
+
+  /// 0..1, character-weighted mean of ML Kit's per-line confidence.
+  final double confidence;
+
+  /// Comparable quality score: the amount of recognized content, weighted
+  /// by how sure the engine was about it. Confidence contributes at half
+  /// strength so a marginally-more-confident pass can't beat one that
+  /// actually read substantially more of the page.
+  double get score => text.replaceAll(RegExp(r'\s'), '').length * (0.5 + confidence / 2);
+}
+
 /// Wraps Google ML Kit's on-device text recognizer. Recognition is fully
 /// offline: the small script model ships with the app / Play Services and
 /// no image ever leaves the device.
@@ -32,22 +50,42 @@ class TextRecognitionDataSource {
   }
 
   /// Recognizes handwritten/printed text in [imagePath] and returns it with
-  /// paragraph structure preserved, or an empty string when nothing readable
-  /// was found — so callers can compare multiple passes (e.g. the original
-  /// vs the enhanced image) and keep the better result. Throws
-  /// [AppException] only when the image itself cannot be processed.
-  Future<String> tryRecognize(String imagePath, RecognitionLanguage language) async {
+  /// paragraph structure preserved, or an empty outcome when nothing
+  /// readable was found — so callers can compare multiple passes (e.g. the
+  /// original vs enhanced vs binarized image) and keep the best result.
+  /// Throws [AppException] only when the image itself cannot be processed.
+  Future<RecognitionOutcome> tryRecognize(String imagePath, RecognitionLanguage language) async {
     try {
       final inputImage = InputImage.fromFilePath(imagePath);
       final recognizer = _recognizerFor(language);
       final result = await recognizer.processImage(inputImage);
-      return _composeText(result);
+      return RecognitionOutcome(
+        text: _composeText(result),
+        confidence: _averageConfidence(result),
+      );
     } catch (_) {
       throw const AppException(
         'This page could not be processed.',
         suggestion: 'Make sure the image is clear and try again.',
       );
     }
+  }
+
+  /// Character-weighted mean of ML Kit's per-line confidence, so long
+  /// well-recognized lines count for more than short noisy ones. Lines
+  /// without a reported confidence assume a neutral 0.5.
+  double _averageConfidence(RecognizedText result) {
+    var weightedSum = 0.0;
+    var totalChars = 0;
+    for (final block in result.blocks) {
+      for (final line in block.lines) {
+        final chars = line.text.trim().length;
+        if (chars == 0) continue;
+        weightedSum += (line.confidence ?? 0.5) * chars;
+        totalChars += chars;
+      }
+    }
+    return totalChars == 0 ? 0 : weightedSum / totalChars;
   }
 
   /// Rebuilds the page text in true reading order. ML Kit returns text
