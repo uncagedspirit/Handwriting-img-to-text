@@ -24,6 +24,7 @@ class ReviewController extends ChangeNotifier {
   ScanDocument document;
   final TextEditingController textController;
   final UndoHistoryController undoController;
+  final FocusNode editorFocusNode = FocusNode();
 
   ReviewViewMode viewMode = ReviewViewMode.text;
   int imagePageIndex = 0;
@@ -101,6 +102,8 @@ class ReviewController extends ChangeNotifier {
   }
 
   void selectAll() {
+    // The field must be focused first or the selection is never rendered.
+    editorFocusNode.requestFocus();
     textController.selection = TextSelection(baseOffset: 0, extentOffset: textController.text.length);
   }
 
@@ -108,6 +111,7 @@ class ReviewController extends ChangeNotifier {
   void dispose() {
     textController.dispose();
     undoController.dispose();
+    editorFocusNode.dispose();
     super.dispose();
   }
 }

@@ -80,21 +80,21 @@ class _ReviewView extends StatelessWidget {
     final controller = context.read<ReviewController>();
     final searchController = TextEditingController();
     final replaceController = TextEditingController();
-    await showModalBottomSheet(
+    final count = await showModalBottomSheet<int>(
       context: context,
       isScrollControlled: true,
-      builder: (context) => Padding(
+      builder: (sheetContext) => Padding(
         padding: EdgeInsets.only(
           left: AppSpacing.lg,
           right: AppSpacing.lg,
           top: AppSpacing.lg,
-          bottom: MediaQuery.of(context).viewInsets.bottom + AppSpacing.lg,
+          bottom: MediaQuery.of(sheetContext).viewInsets.bottom + AppSpacing.lg,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Find & Replace', style: Theme.of(context).textTheme.titleLarge),
+            Text('Find & Replace', style: Theme.of(sheetContext).textTheme.titleLarge),
             const SizedBox(height: AppSpacing.md),
             TextField(
               controller: searchController,
@@ -111,12 +111,8 @@ class _ReviewView extends StatelessWidget {
               width: double.infinity,
               child: FilledButton(
                 onPressed: () {
-                  final count = controller.replaceAll(searchController.text, replaceController.text);
-                  Navigator.of(context).pop();
-                  AppSnackBar.info(
-                    context,
-                    count == 0 ? 'No matches found' : 'Replaced $count occurrence${count == 1 ? '' : 's'}',
-                  );
+                  final replaced = controller.replaceAll(searchController.text, replaceController.text);
+                  Navigator.of(sheetContext).pop(replaced);
                 },
                 style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
                 child: const Text('Replace All'),
@@ -126,6 +122,15 @@ class _ReviewView extends StatelessWidget {
         ),
       ),
     );
+    // Feedback must use the screen's own context: the sheet's context is
+    // deactivated once it pops, which previously made the result toast
+    // silently fail.
+    if (count != null && context.mounted) {
+      AppSnackBar.info(
+        context,
+        count == 0 ? 'No matches found' : 'Replaced $count occurrence${count == 1 ? '' : 's'}',
+      );
+    }
   }
 
   Future<void> _delete(BuildContext context) async {
@@ -263,6 +268,7 @@ class _TextEditor extends StatelessWidget {
       child: TextField(
         controller: controller.textController,
         undoController: controller.undoController,
+        focusNode: controller.editorFocusNode,
         maxLines: null,
         expands: true,
         textAlignVertical: TextAlignVertical.top,
@@ -331,15 +337,26 @@ class _BottomActions extends StatelessWidget {
       ),
       child: Row(
         children: [
-          IconButton(
-            tooltip: 'Undo',
-            onPressed: controller.undoController.value.canUndo ? () => controller.undoController.undo() : null,
-            icon: const Icon(Icons.undo),
-          ),
-          IconButton(
-            tooltip: 'Redo',
-            onPressed: controller.undoController.value.canRedo ? () => controller.undoController.redo() : null,
-            icon: const Icon(Icons.redo),
+          // The undo controller is a ValueListenable, not part of the
+          // ChangeNotifier — without listening to it directly these buttons
+          // never left their initial disabled state.
+          ValueListenableBuilder<UndoHistoryValue>(
+            valueListenable: controller.undoController,
+            builder: (context, undoValue, _) => Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  tooltip: 'Undo',
+                  onPressed: undoValue.canUndo ? () => controller.undoController.undo() : null,
+                  icon: const Icon(Icons.undo),
+                ),
+                IconButton(
+                  tooltip: 'Redo',
+                  onPressed: undoValue.canRedo ? () => controller.undoController.redo() : null,
+                  icon: const Icon(Icons.redo),
+                ),
+              ],
+            ),
           ),
           const Spacer(),
           FilledButton.icon(
