@@ -64,8 +64,12 @@ class _PrepareViewState extends State<_PrepareView> {
     final pageSpecs = controller.finalizeAll();
     if (!mounted) return;
 
+    // `result: true` completes the Home screen's await with a signal that
+    // recognition actually started, so it knows not to restore the staged
+    // pages afterward.
     await Navigator.of(context).pushReplacementNamed(
       AppRoutes.processing,
+      result: true,
       arguments: ProcessingArgs(
         pages: pageSpecs,
         documentTitle: widget.documentTitle,
@@ -161,7 +165,9 @@ class _PrepareViewState extends State<_PrepareView> {
                         onTap: controller.isBusy ? null : () => _cropCurrent(context),
                       ),
                       _ToolButton(
-                        icon: Icons.rotate_90_degrees_ccw_outlined,
+                        // The rotation applied is clockwise; the icon should
+                        // point the same way or the button feels reversed.
+                        icon: Icons.rotate_90_degrees_cw_outlined,
                         label: 'Rotate',
                         onTap: controller.isBusy ? null : controller.rotateCurrent,
                       ),

@@ -82,11 +82,19 @@ class _HomeViewState extends State<_HomeView> {
     _clearStaged();
     final title = 'Scan ${_formatNow()}';
     if (!mounted) return;
-    await Navigator.of(context).pushNamed(
+    // The prepare screen completes this future with `true` only when it
+    // hands off to recognition. Any other outcome means the user backed
+    // out — restore their staged pages instead of throwing away what they
+    // just captured.
+    final proceeded = await Navigator.of(context).pushNamed(
       AppRoutes.prepare,
       arguments: PrepareArgs(imagePaths: images, documentTitle: title),
     );
-    if (mounted) context.read<HomeController>().refreshRecent();
+    if (!mounted) return;
+    if (proceeded != true) {
+      setState(() => _stagedImages.addAll(images.where((p) => File(p).existsSync())));
+    }
+    context.read<HomeController>().refreshRecent();
   }
 
   String _formatNow() {
