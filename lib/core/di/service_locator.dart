@@ -2,7 +2,6 @@ import 'package:get_it/get_it.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../data/datasources/capture_datasource.dart';
-import '../../data/datasources/crop_datasource.dart';
 import '../../data/datasources/text_recognition_datasource.dart';
 import '../../data/repositories/export_repository.dart';
 import '../../data/repositories/history_repository.dart';
@@ -29,7 +28,6 @@ Future<void> setupLocator() async {
     ..registerLazySingleton(() => const PermissionHelper())
     ..registerLazySingleton(() => TextRecognitionDataSource())
     ..registerLazySingleton(() => CaptureDataSource())
-    ..registerLazySingleton(() => CropDataSource())
     ..registerLazySingleton(() => SettingsRepository(prefs))
     ..registerLazySingleton(() => HistoryRepository(historyBox))
     ..registerLazySingleton(() => ExportRepository(locator<FileStorage>()));

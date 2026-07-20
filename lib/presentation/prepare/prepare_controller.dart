@@ -1,9 +1,8 @@
 import 'dart:io';
-import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import '../../core/utils/file_storage.dart';
 import '../../core/utils/image_enhancer.dart';
-import '../../data/datasources/crop_datasource.dart';
 import '../processing/processing_args.dart';
 
 /// Mutable state for a single page while the user reviews/adjusts it.
@@ -23,17 +22,14 @@ class PrepareController extends ChangeNotifier {
   PrepareController({
     required List<String> imagePaths,
     required ImageEnhancer imageEnhancer,
-    required CropDataSource cropDataSource,
     required FileStorage fileStorage,
   })  : _enhancer = imageEnhancer,
-        _cropper = cropDataSource,
         _storage = fileStorage,
         pages = imagePaths
             .map((p) => PreparePageState(originalPath: p, workingPath: p))
             .toList();
 
   final ImageEnhancer _enhancer;
-  final CropDataSource _cropper;
   final FileStorage _storage;
   final _uuid = const Uuid();
 
@@ -63,14 +59,15 @@ class PrepareController extends ChangeNotifier {
     return '${dir.path}/${_uuid.v4()}.jpg';
   }
 
-  Future<void> cropCurrent() async {
+  /// Persists cropped bytes from the in-app crop editor as the page's new
+  /// working image.
+  Future<void> applyCroppedBytes(Uint8List bytes) async {
     isBusy = true;
     notifyListeners();
     try {
-      final result = await _cropper.crop(current.workingPath);
-      if (result != null) {
-        current.workingPath = result;
-      }
+      final outputPath = await _newTempPath();
+      await File(outputPath).writeAsBytes(bytes, flush: true);
+      current.workingPath = outputPath;
     } finally {
       isBusy = false;
       notifyListeners();

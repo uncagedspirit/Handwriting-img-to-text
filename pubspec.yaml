@@ -18,7 +18,7 @@ dependencies:
 
   # Capture & image handling
   image_picker: ^1.1.2
-  image_cropper: ^8.0.2
+  crop_your_image: ^2.0.0
   image: ^4.2.0
 
   # Local storage

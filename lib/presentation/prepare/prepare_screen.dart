@@ -9,9 +9,9 @@ import '../../core/theme/app_spacing.dart';
 import '../../core/utils/file_storage.dart';
 import '../../core/utils/image_enhancer.dart';
 import '../../core/widgets/app_button.dart';
-import '../../data/datasources/crop_datasource.dart';
 import '../../domain/entities/app_enums.dart';
 import '../processing/processing_args.dart';
+import 'crop_screen.dart';
 import 'prepare_controller.dart';
 
 class PrepareScreen extends StatelessWidget {
@@ -25,7 +25,6 @@ class PrepareScreen extends StatelessWidget {
       create: (_) => PrepareController(
         imagePaths: args.imagePaths,
         imageEnhancer: locator<ImageEnhancer>(),
-        cropDataSource: locator<CropDataSource>(),
         fileStorage: locator<FileStorage>(),
       ),
       child: _PrepareView(documentTitle: args.documentTitle),
@@ -43,6 +42,14 @@ class _PrepareView extends StatefulWidget {
 
 class _PrepareViewState extends State<_PrepareView> {
   bool _adjustExpanded = false;
+
+  Future<void> _cropCurrent(BuildContext context) async {
+    final controller = context.read<PrepareController>();
+    final cropped = await CropScreen.open(context, File(controller.current.workingPath));
+    if (cropped != null) {
+      await controller.applyCroppedBytes(cropped);
+    }
+  }
 
   Future<void> _proceed() async {
     final controller = context.read<PrepareController>();
@@ -151,7 +158,7 @@ class _PrepareViewState extends State<_PrepareView> {
                       _ToolButton(
                         icon: Icons.crop,
                         label: 'Crop',
-                        onTap: controller.isBusy ? null : controller.cropCurrent,
+                        onTap: controller.isBusy ? null : () => _cropCurrent(context),
                       ),
                       _ToolButton(
                         icon: Icons.rotate_90_degrees_ccw_outlined,
