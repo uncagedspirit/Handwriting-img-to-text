@@ -22,15 +22,6 @@ class FileStorage {
 
   Future<Directory> get tempDir async => getTemporaryDirectory();
 
-  /// Public Downloads directory on Android, used when the user enables
-  /// "Save exports to Downloads" in Settings.
-  Future<Directory?> get downloadsDir async {
-    if (!Platform.isAndroid) return null;
-    final dir = Directory('/storage/emulated/0/Download');
-    if (!await dir.exists()) return null;
-    return dir;
-  }
-
   Future<void> deleteIfExists(String path) async {
     final file = File(path);
     if (await file.exists()) await file.delete();
