@@ -25,7 +25,7 @@ class ProcessingScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
       create: (_) => ProcessingController(
-        imagePaths: args.imagePaths,
+        pageSpecs: args.pages,
         documentTitle: args.documentTitle,
         batchMode: args.batchMode,
         recognizer: locator<TextRecognitionDataSource>(),
@@ -95,8 +95,11 @@ class _ProcessingView extends StatelessWidget {
             Text(stageLabel, style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: AppSpacing.xs),
             Text(
+              // completedSteps counts finished work, so the step currently
+              // running is the next one — without the +1 users saw the
+              // confusing "Step 0 of N" at the start.
               total > 1
-                  ? 'Step ${controller.completedSteps.clamp(0, total)} of $total'
+                  ? 'Step ${(controller.completedSteps + 1).clamp(1, total)} of $total'
                   : 'This only takes a moment',
               style: Theme.of(context).textTheme.bodyMedium,
             ),

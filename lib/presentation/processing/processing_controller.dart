@@ -10,6 +10,7 @@ import '../../data/repositories/settings_repository.dart';
 import '../../domain/entities/app_enums.dart';
 import '../../domain/entities/scan_document.dart';
 import '../../domain/entities/scan_page.dart';
+import 'processing_args.dart';
 
 enum ProcessingStage { preparing, recognizing, saving, done, failed }
 
@@ -18,7 +19,7 @@ enum ProcessingStage { preparing, recognizing, saving, done, failed }
 /// keep-original-image / auto-save-history settings.
 class ProcessingController extends ChangeNotifier {
   ProcessingController({
-    required this.imagePaths,
+    required this.pageSpecs,
     required this.documentTitle,
     required this.batchMode,
     required TextRecognitionDataSource recognizer,
@@ -32,7 +33,7 @@ class ProcessingController extends ChangeNotifier {
         _storage = fileStorage,
         _enhancer = imageEnhancer;
 
-  final List<String> imagePaths;
+  final List<PageSpec> pageSpecs;
   final String documentTitle;
   final BatchMode batchMode;
 
@@ -60,7 +61,7 @@ class ProcessingController extends ChangeNotifier {
     // recognition, so the progress bar reflects the whole pipeline and never
     // sits still while heavy work happens off-screen.
     final autoEnhance = _settings.imageEnhancementEnabled;
-    totalSteps = imagePaths.length * (autoEnhance ? 2 : 1);
+    totalSteps = pageSpecs.length * (autoEnhance ? 2 : 1);
     completedSteps = 0;
     stage = ProcessingStage.preparing;
     notifyListeners();
@@ -72,17 +73,36 @@ class ProcessingController extends ChangeNotifier {
 
     try {
       // Each page gets a set of variants for recognition to try: the
-      // untouched capture, plus (when enhancement is on) an adaptively
-      // enhanced version and an adaptively binarized version. Different
-      // page conditions favor different variants.
+      // (manually adjusted) capture, plus (when enhancement is on) an
+      // adaptively enhanced version and an adaptively binarized version.
+      // Different page conditions favor different variants.
       final candidates = <List<String>>[];
-      for (final path in imagePaths) {
-        final variants = [path];
+      for (final spec in pageSpecs) {
+        final dir = await _storage.tempDir;
+        var basePath = spec.imagePath;
+
+        // Bake the user's prepare-screen brightness/contrast first so every
+        // variant (and the persisted image) reflects what they saw in the
+        // live preview.
+        if (!spec.adjustments.isNeutral) {
+          final adjusted = await _enhancer.applyManualAdjustments(
+            File(basePath),
+            '${dir.path}/${_uuid.v4()}.jpg',
+            spec.adjustments,
+          );
+          await _storage.deleteIfExists(basePath);
+          basePath = adjusted.path;
+        }
+
+        final variants = [basePath];
         if (autoEnhance) {
-          final dir = await _storage.tempDir;
-          final enhanced = await _enhancer.autoEnhance(File(path), '${dir.path}/${_uuid.v4()}.jpg');
-          final binarized = await _enhancer.binarize(File(path), '${dir.path}/${_uuid.v4()}.jpg');
-          variants.addAll([enhanced.path, binarized.path]);
+          // The two enhancement variants are independent pixel jobs; run
+          // them on parallel isolates to halve this stage's wall time.
+          final results = await Future.wait([
+            _enhancer.autoEnhance(File(basePath), '${dir.path}/${_uuid.v4()}.jpg'),
+            _enhancer.binarize(File(basePath), '${dir.path}/${_uuid.v4()}.jpg'),
+          ]);
+          variants.addAll(results.map((f) => f.path));
         }
         candidates.add(variants);
         completedSteps++;
@@ -91,6 +111,11 @@ class ProcessingController extends ChangeNotifier {
 
       stage = ProcessingStage.recognizing;
       notifyListeners();
+
+      // A pass this confident with real content won't be beaten by another
+      // variant often enough to justify the extra seconds per page.
+      const earlyExitConfidence = 0.82;
+      const earlyExitMinChars = 40;
 
       for (final variants in candidates) {
         final originalPath = variants.first;
@@ -103,6 +128,10 @@ class ProcessingController extends ChangeNotifier {
             if (outcome.score > best.score) {
               best = outcome;
               winningPath = path;
+            }
+            if (outcome.confidence >= earlyExitConfidence &&
+                outcome.text.replaceAll(RegExp(r'\s'), '').length >= earlyExitMinChars) {
+              break;
             }
           }
 

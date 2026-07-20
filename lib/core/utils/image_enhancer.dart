@@ -95,8 +95,12 @@ img.Image? _prepareBase(Uint8List bytes) {
   final decoded = img.decodeImage(bytes);
   if (decoded == null) return null;
   var image = img.bakeOrientation(decoded);
-  if (image.width > 3200) {
-    image = img.copyResize(image, width: 3200);
+  // 2200px keeps handwriting comfortably above the recognizer's minimum
+  // stroke size while roughly halving per-variant pixel work compared to
+  // the previous 3200px cap — users reported multi-page batches taking
+  // most of a minute.
+  if (image.width > 2200) {
+    image = img.copyResize(image, width: 2200);
   } else if (image.width < 1200) {
     image = img.copyResize(image, width: image.width * 2, interpolation: img.Interpolation.cubic);
   }
