@@ -54,13 +54,13 @@ class _PrepareViewState extends State<_PrepareView> {
       batchMode = chosen;
     }
 
-    final finalPaths = controller.finalizeAll();
+    final pageSpecs = controller.finalizeAll();
     if (!mounted) return;
 
     await Navigator.of(context).pushReplacementNamed(
       AppRoutes.processing,
       arguments: ProcessingArgs(
-        imagePaths: finalPaths,
+        pages: pageSpecs,
         documentTitle: widget.documentTitle,
         batchMode: batchMode,
       ),
@@ -124,7 +124,10 @@ class _PrepareViewState extends State<_PrepareView> {
                   InteractiveViewer(
                     minScale: 1,
                     maxScale: 4,
-                    child: Image.file(File(page.workingPath), fit: BoxFit.contain),
+                    child: ColorFiltered(
+                      colorFilter: _adjustmentFilter(page.brightness, page.contrast),
+                      child: Image.file(File(page.workingPath), fit: BoxFit.contain),
+                    ),
                   ),
                   if (controller.isBusy)
                     Container(
@@ -174,13 +177,11 @@ class _PrepareViewState extends State<_PrepareView> {
                             label: 'Brightness',
                             value: page.brightness,
                             onChanged: (v) => controller.updateAdjustments(brightness: v, contrast: page.contrast),
-                            onChangeEnd: (_) => controller.commitAdjustments(),
                           ),
                           _AdjustSlider(
                             label: 'Contrast',
                             value: page.contrast,
                             onChanged: (v) => controller.updateAdjustments(brightness: page.brightness, contrast: v),
-                            onChangeEnd: (_) => controller.commitAdjustments(),
                           ),
                         ],
                       ),
@@ -247,18 +248,33 @@ class _ToolButton extends StatelessWidget {
   }
 }
 
+/// Mirrors [ManualAdjustments] as a GPU color filter so slider changes are
+/// visible instantly while dragging. Uses the same multiplicative model the
+/// baking step applies later: contrast pivots around mid-gray, brightness
+/// scales channel values.
+ColorFilter _adjustmentFilter(double brightness, double contrast) {
+  final b = (1.0 + brightness / 100.0).clamp(0.2, 2.0);
+  final c = (1.0 + contrast / 100.0).clamp(0.2, 2.0);
+  final scale = b * c;
+  final offset = 255.0 * b * (1.0 - c) / 2.0;
+  return ColorFilter.matrix([
+    scale, 0, 0, 0, offset,
+    0, scale, 0, 0, offset,
+    0, 0, scale, 0, offset,
+    0, 0, 0, 1, 0,
+  ]);
+}
+
 class _AdjustSlider extends StatelessWidget {
   const _AdjustSlider({
     required this.label,
     required this.value,
     required this.onChanged,
-    required this.onChangeEnd,
   });
 
   final String label;
   final double value;
   final ValueChanged<double> onChanged;
-  final ValueChanged<double> onChangeEnd;
 
   @override
   Widget build(BuildContext context) {
@@ -271,7 +287,6 @@ class _AdjustSlider extends StatelessWidget {
             min: -100,
             max: 100,
             onChanged: onChanged,
-            onChangeEnd: onChangeEnd,
           ),
         ),
       ],

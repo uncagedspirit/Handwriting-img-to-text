@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 import '../../core/utils/file_storage.dart';
 import '../../core/utils/image_enhancer.dart';
 import '../../data/datasources/crop_datasource.dart';
+import '../processing/processing_args.dart';
 
 /// Mutable state for a single page while the user reviews/adjusts it.
 class PreparePageState {
@@ -69,8 +70,6 @@ class PrepareController extends ChangeNotifier {
       final result = await _cropper.crop(current.workingPath);
       if (result != null) {
         current.workingPath = result;
-        current.brightness = 0;
-        current.contrast = 0;
       }
     } finally {
       isBusy = false;
@@ -92,37 +91,23 @@ class PrepareController extends ChangeNotifier {
     }
   }
 
-  Future<void> updateAdjustments({required double brightness, required double contrast}) async {
+  /// Updates the live-preview adjustment values for the current page. They
+  /// stay exactly where the user set them (no baking, no snap-back); the
+  /// pixels are modified later in the processing pipeline where progress is
+  /// visible.
+  void updateAdjustments({required double brightness, required double contrast}) {
     current.brightness = brightness;
     current.contrast = contrast;
     notifyListeners();
   }
 
-  /// Bakes the current brightness/contrast values into the working image.
-  Future<void> commitAdjustments() async {
-    final page = current;
-    if (page.brightness == 0 && page.contrast == 0) return;
-    isBusy = true;
-    notifyListeners();
-    try {
-      final outputPath = await _newTempPath();
-      final result = await _enhancer.applyManualAdjustments(
-        File(page.workingPath),
-        outputPath,
-        ManualAdjustments(brightness: page.brightness, contrast: page.contrast),
-      );
-      page.workingPath = result.path;
-      page.brightness = 0;
-      page.contrast = 0;
-    } finally {
-      isBusy = false;
-      notifyListeners();
-    }
-  }
-
-  /// The working image path for every page, in order. Auto-enhancement (if
-  /// enabled) runs later on the processing screen so tapping "Recognize
-  /// Text" navigates immediately instead of leaving the button looking dead
-  /// while heavy image work happens silently.
-  List<String> finalizeAll() => pages.map((p) => p.workingPath).toList();
+  /// Every page's working image plus its pending manual adjustments, ready
+  /// for the processing screen. Heavy pixel work is deliberately not done
+  /// here so tapping "Recognize Text" navigates immediately.
+  List<PageSpec> finalizeAll() => pages
+      .map((p) => PageSpec(
+            imagePath: p.workingPath,
+            adjustments: ManualAdjustments(brightness: p.brightness, contrast: p.contrast),
+          ))
+      .toList();
 }
