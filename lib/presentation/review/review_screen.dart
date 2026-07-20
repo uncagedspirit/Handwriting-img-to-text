@@ -168,6 +168,15 @@ class _ReviewView extends StatelessWidget {
         ),
         actions: [
           IconButton(
+            tooltip: 'Share',
+            onPressed: () => quickShare(
+              context,
+              text: controller.document.displayText,
+              fileName: controller.document.title,
+            ),
+            icon: const Icon(Icons.share_outlined),
+          ),
+          IconButton(
             tooltip: 'Favorite',
             onPressed: controller.toggleFavorite,
             icon: Icon(
