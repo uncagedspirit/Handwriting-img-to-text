@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/constants/app_config.dart';
+import '../../core/di/service_locator.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_spacing.dart';
+import '../../core/widgets/app_snackbar.dart';
+import '../../core/widgets/confirm_dialog.dart';
 import '../../core/widgets/section_header.dart';
+import '../../data/repositories/history_repository.dart';
 import '../../domain/entities/app_enums.dart';
 import 'settings_controller.dart';
 
@@ -89,6 +93,15 @@ class SettingsScreen extends StatelessWidget {
                   value: settings.autoSaveHistory,
                   onChanged: settings.setAutoSaveHistory,
                 ),
+                const Divider(height: 1),
+                _NavTile(
+                  icon: Icons.delete_sweep_outlined,
+                  title: 'Clear All History',
+                  subtitle: 'Delete every saved document and its stored pages',
+                  onTap: () => _clearHistory(context),
+                  showChevron: false,
+                  isDestructive: true,
+                ),
               ],
             ),
             const SizedBox(height: AppSpacing.lg),
@@ -134,6 +147,28 @@ class SettingsScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _clearHistory(BuildContext context) async {
+    final history = locator<HistoryRepository>();
+    final count = history.getAll().length;
+    if (count == 0) {
+      AppSnackBar.info(context, 'There is nothing in your history yet');
+      return;
+    }
+
+    final confirmed = await showConfirmDialog(
+      context,
+      title: 'Clear All History?',
+      message: 'This permanently deletes $count document${count == 1 ? '' : 's'} '
+          'and every page image stored with them. This cannot be undone.',
+      confirmLabel: 'Delete All',
+      isDestructive: true,
+    );
+    if (!confirmed || !context.mounted) return;
+
+    await history.clear();
+    if (context.mounted) AppSnackBar.success(context, 'History cleared');
   }
 
   Future<void> _pickLanguage(BuildContext context, SettingsController settings) async {
@@ -234,6 +269,7 @@ class _NavTile extends StatelessWidget {
     this.subtitle,
     required this.onTap,
     this.showChevron = true,
+    this.isDestructive = false,
   });
 
   final IconData icon;
@@ -241,12 +277,14 @@ class _NavTile extends StatelessWidget {
   final String? subtitle;
   final VoidCallback onTap;
   final bool showChevron;
+  final bool isDestructive;
 
   @override
   Widget build(BuildContext context) {
+    final color = isDestructive ? AppColors.error : AppColors.primary;
     return ListTile(
-      leading: Icon(icon, color: AppColors.primary),
-      title: Text(title),
+      leading: Icon(icon, color: color),
+      title: Text(title, style: isDestructive ? TextStyle(color: color) : null),
       subtitle: subtitle != null ? Text(subtitle!) : null,
       trailing: showChevron ? const Icon(Icons.chevron_right) : null,
       onTap: onTap,
