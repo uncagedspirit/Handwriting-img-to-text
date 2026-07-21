@@ -6,6 +6,7 @@ import '../../core/routing/app_routes.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/widgets/confirm_dialog.dart';
 import '../../core/widgets/empty_state.dart';
+import '../../core/widgets/rename_dialog.dart';
 import '../../data/repositories/history_repository.dart';
 import '../../domain/entities/scan_document.dart';
 import '../common/document_list_tile.dart';
@@ -23,26 +24,25 @@ class HistoryScreen extends StatelessWidget {
   }
 }
 
-class _HistoryView extends StatelessWidget {
+class _HistoryView extends StatefulWidget {
   const _HistoryView();
+
+  @override
+  State<_HistoryView> createState() => _HistoryViewState();
+}
+
+class _HistoryViewState extends State<_HistoryView> {
+  final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   Future<void> _rename(BuildContext context, ScanDocument doc) async {
     final controller = context.read<HistoryController>();
-    final textController = TextEditingController(text: doc.title);
-    final newTitle = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Rename Document'),
-        content: TextField(controller: textController, autofocus: true),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(textController.text),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
+    final newTitle = await showRenameDialog(context, doc.title);
     if (newTitle != null) await controller.rename(doc, newTitle);
   }
 
@@ -107,6 +107,18 @@ class _HistoryView extends StatelessWidget {
   Widget build(BuildContext context) {
     final controller = context.watch<HistoryController>();
 
+    return PopScope(
+      // In selection mode, back should drop the selection rather than
+      // leaving the screen entirely.
+      canPop: !controller.selectionMode,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) controller.exitSelectionMode();
+      },
+      child: _buildScaffold(context, controller),
+    );
+  }
+
+  Widget _buildScaffold(BuildContext context, HistoryController controller) {
     return Scaffold(
       appBar: AppBar(
         title: controller.selectionMode
@@ -145,10 +157,23 @@ class _HistoryView extends StatelessWidget {
                   Padding(
                     padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, 0),
                     child: TextField(
+                      controller: _searchController,
                       onChanged: controller.setQuery,
-                      decoration: const InputDecoration(
+                      textInputAction: TextInputAction.search,
+                      decoration: InputDecoration(
                         hintText: 'Search documents',
-                        prefixIcon: Icon(Icons.search),
+                        prefixIcon: const Icon(Icons.search),
+                        suffixIcon: controller.query.isEmpty
+                            ? null
+                            : IconButton(
+                                icon: const Icon(Icons.clear),
+                                tooltip: 'Clear search',
+                                onPressed: () {
+                                  _searchController.clear();
+                                  controller.setQuery('');
+                                  FocusScope.of(context).unfocus();
+                                },
+                              ),
                       ),
                     ),
                   ),
@@ -187,7 +212,12 @@ class _HistoryView extends StatelessWidget {
                                 padding: const EdgeInsets.only(bottom: AppSpacing.sm),
                                 child: Dismissible(
                                   key: ValueKey(doc.id),
-                                  direction: DismissDirection.endToStart,
+                                  // Swiping rows away while multi-selecting
+                                  // is ambiguous; the toolbar handles bulk
+                                  // deletion in that mode.
+                                  direction: controller.selectionMode
+                                      ? DismissDirection.none
+                                      : DismissDirection.endToStart,
                                   confirmDismiss: (_) => showConfirmDialog(
                                     context,
                                     title: 'Delete Document?',
