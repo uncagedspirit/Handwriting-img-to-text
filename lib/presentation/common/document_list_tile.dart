@@ -26,12 +26,21 @@ class DocumentListTile extends StatelessWidget {
   final bool selectionMode;
   final VoidCallback? onLongPress;
 
+  static const double _thumbnailSize = 56;
+
+  Widget _placeholder() => Container(
+        color: AppColors.primaryLight,
+        child: const Icon(Icons.description_outlined, color: AppColors.primary),
+      );
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final thumbnailPath = document.pages.isNotEmpty ? document.pages.first.imagePath : null;
-    final thumbnailFile = thumbnailPath != null ? File(thumbnailPath) : null;
-    final hasThumbnail = thumbnailFile != null && thumbnailFile.existsSync();
+    // Deliberately no existsSync() here: synchronous file I/O in build runs
+    // on the UI thread for every row on every rebuild. A missing file is
+    // handled by errorBuilder instead.
+    final thumbnailFile = (thumbnailPath != null && thumbnailPath.isNotEmpty) ? File(thumbnailPath) : null;
 
     return Card(
       child: InkWell(
@@ -53,13 +62,19 @@ class DocumentListTile extends StatelessWidget {
               ClipRRect(
                 borderRadius: BorderRadius.circular(12),
                 child: SizedBox(
-                  width: 56,
-                  height: 56,
-                  child: hasThumbnail
-                      ? Image.file(thumbnailFile, fit: BoxFit.cover)
-                      : Container(
-                          color: AppColors.primaryLight,
-                          child: const Icon(Icons.description_outlined, color: AppColors.primary),
+                  width: _thumbnailSize,
+                  height: _thumbnailSize,
+                  child: thumbnailFile == null
+                      ? _placeholder()
+                      : Image.file(
+                          thumbnailFile,
+                          fit: BoxFit.cover,
+                          // Decode straight to thumbnail size. Without this
+                          // every row held a full-resolution bitmap in the
+                          // image cache — tens of megabytes per screen.
+                          cacheWidth: (_thumbnailSize * MediaQuery.devicePixelRatioOf(context)).round(),
+                          filterQuality: FilterQuality.low,
+                          errorBuilder: (_, _, _) => _placeholder(),
                         ),
                 ),
               ),
