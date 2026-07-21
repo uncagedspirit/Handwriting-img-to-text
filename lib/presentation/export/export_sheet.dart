@@ -13,7 +13,13 @@ Future<void> showExportSheet(
   BuildContext context, {
   required String text,
   required String fileName,
-}) {
+}) async {
+  // A page whose recognition found nothing has no text to export, and
+  // share_plus rejects empty content outright.
+  if (text.trim().isEmpty) {
+    AppSnackBar.info(context, 'There is no text to export yet');
+    return;
+  }
   return showModalBottomSheet(
     context: context,
     builder: (context) => _ExportSheet(text: text, fileName: fileName),
@@ -24,6 +30,10 @@ Future<void> showExportSheet(
 /// file in the default export format. Used by the review screen's quick
 /// share action.
 Future<void> quickShare(BuildContext context, {required String text, required String fileName}) async {
+  if (text.trim().isEmpty) {
+    AppSnackBar.info(context, 'There is no text to share yet');
+    return;
+  }
   final repo = locator<ExportRepository>();
   final settings = locator<SettingsRepository>();
   if (settings.defaultShareAsPlainText) {
