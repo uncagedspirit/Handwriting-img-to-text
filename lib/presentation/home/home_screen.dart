@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import '../../core/constants/app_config.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/routing/app_router.dart';
 import '../../core/routing/app_routes.dart';
@@ -80,7 +82,7 @@ class _HomeViewState extends State<_HomeView> {
     if (_stagedImages.isEmpty) return;
     final images = List<String>.of(_stagedImages);
     _clearStaged();
-    final title = 'Scan ${_formatNow()}';
+    final title = _defaultTitle();
     if (!mounted) return;
     // The prepare screen completes this future with `true` only when it
     // hands off to recognition. Any other outcome means the user backed
@@ -97,10 +99,10 @@ class _HomeViewState extends State<_HomeView> {
     context.read<HomeController>().refreshRecent();
   }
 
-  String _formatNow() {
-    final now = DateTime.now();
-    return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-  }
+  /// Includes the time, not just the date — scanning several pages in one
+  /// day previously produced a list of identically named documents that
+  /// were impossible to tell apart in History.
+  String _defaultTitle() => 'Scan ${DateFormat('d MMM, h:mm a').format(DateTime.now())}';
 
   @override
   Widget build(BuildContext context) {
@@ -108,7 +110,8 @@ class _HomeViewState extends State<_HomeView> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Handwriting to Text'),
+        // Sourced from AppConfig so renaming the product is a one-line change.
+        title: const Text(AppConfig.appName),
         actions: [
           IconButton(
             tooltip: 'History',
@@ -290,7 +293,22 @@ class _StagedPagesSection extends StatelessWidget {
                     children: [
                       ClipRRect(
                         borderRadius: BorderRadius.circular(12),
-                        child: Image.file(File(path), width: 72, height: 88, fit: BoxFit.cover),
+                        child: Image.file(
+                          File(path),
+                          width: 72,
+                          height: 88,
+                          fit: BoxFit.cover,
+                          // Staged pages are full-size captures; decode them
+                          // down rather than caching whole bitmaps per strip.
+                          cacheWidth: (72 * MediaQuery.devicePixelRatioOf(context)).round(),
+                          filterQuality: FilterQuality.low,
+                          errorBuilder: (_, _, _) => Container(
+                            width: 72,
+                            height: 88,
+                            color: AppColors.primaryLight,
+                            child: const Icon(Icons.broken_image_outlined, color: AppColors.primary),
+                          ),
+                        ),
                       ),
                       Positioned(
                         top: -6,
