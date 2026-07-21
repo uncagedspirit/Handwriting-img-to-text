@@ -292,12 +292,34 @@ class _TextEditor extends StatelessWidget {
   }
 }
 
-class _ImageViewer extends StatelessWidget {
+class _ImageViewer extends StatefulWidget {
   const _ImageViewer({required this.controller});
   final ReviewController controller;
 
   @override
+  State<_ImageViewer> createState() => _ImageViewerState();
+}
+
+class _ImageViewerState extends State<_ImageViewer> {
+  late final PageController _pageController;
+
+  @override
+  void initState() {
+    super.initState();
+    // Built once and disposed properly: creating this inside build leaked a
+    // controller on every rebuild and fought with the user's own swipes.
+    _pageController = PageController(initialPage: widget.controller.imagePageIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final controller = widget.controller;
     final pages = controller.document.pages;
     if (!controller.hasKeptImages) {
       return const EmptyState(
@@ -311,7 +333,7 @@ class _ImageViewer extends StatelessWidget {
         Expanded(
           child: PageView.builder(
             itemCount: pages.length,
-            controller: PageController(initialPage: controller.imagePageIndex),
+            controller: _pageController,
             onPageChanged: controller.setImagePageIndex,
             itemBuilder: (context, index) {
               final path = pages[index].imagePath;

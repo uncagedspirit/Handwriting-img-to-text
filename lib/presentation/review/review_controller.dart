@@ -33,8 +33,14 @@ class ReviewController extends ChangeNotifier {
 
   void initListeners() {
     textController.addListener(() {
-      isDirty = textController.text != document.displayText;
-      notifyListeners();
+      final dirty = textController.text != document.displayText;
+      // Only notify when the flag actually flips. Rebuilding the whole
+      // review screen — including the page image viewer — on every
+      // keystroke made editing long documents feel sluggish.
+      if (dirty != isDirty) {
+        isDirty = dirty;
+        notifyListeners();
+      }
     });
   }
 

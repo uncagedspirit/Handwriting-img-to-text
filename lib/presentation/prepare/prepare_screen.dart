@@ -268,8 +268,10 @@ class _ToolButton extends StatelessWidget {
 ColorFilter _adjustmentFilter(double brightness, double contrast) {
   final b = (1.0 + brightness / 100.0).clamp(0.2, 2.0);
   final c = (1.0 + contrast / 100.0).clamp(0.2, 2.0);
+  // Must match the bake in ImageEnhancer exactly — (v*b - 127.5)*c + 127.5 —
+  // or the exported page won't look like the preview the user approved.
   final scale = b * c;
-  final offset = 255.0 * b * (1.0 - c) / 2.0;
+  final offset = 127.5 * (1.0 - c);
   return ColorFilter.matrix([
     scale, 0, 0, 0, offset,
     0, scale, 0, 0, offset,
