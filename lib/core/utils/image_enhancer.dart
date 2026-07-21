@@ -2,9 +2,18 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 
+/// Working width for OCR variants. Handwriting on a page is comfortably
+/// readable at this size, and every extra pixel costs pure-Dart decode,
+/// filter and encode time on the user's phone.
+const int _ocrWidth = 1600;
+
+/// Cap for images the user keeps seeing (rotate output). Slightly higher so
+/// the retained page still looks sharp when zoomed in review.
+const int _displayWidth = 2000;
+
 /// Pixel-level adjustments applied to a captured page before recognition.
-/// Values are user-facing multipliers/offsets, centered at their neutral
-/// default so `0` always means "no change".
+/// Values are user-facing offsets centered on their neutral default, so `0`
+/// always means "no change".
 class ManualAdjustments {
   const ManualAdjustments({this.brightness = 0, this.contrast = 0});
 
@@ -17,8 +26,29 @@ class ManualAdjustments {
   bool get isNeutral => brightness == 0 && contrast == 0;
 }
 
-class _ManualAdjustArgs {
-  const _ManualAdjustArgs(this.bytes, this.brightness, this.contrast);
+/// The two derived images recognition can try in addition to the original.
+class OcrVariants {
+  const OcrVariants({required this.enhancedPath, required this.binarizedPath});
+
+  final String enhancedPath;
+  final String binarizedPath;
+
+  List<String> get paths => [enhancedPath, binarizedPath];
+}
+
+class _VariantArgs {
+  const _VariantArgs(this.bytes);
+  final Uint8List bytes;
+}
+
+class _VariantBytes {
+  const _VariantBytes(this.enhanced, this.binarized);
+  final Uint8List enhanced;
+  final Uint8List binarized;
+}
+
+class _AdjustArgs {
+  const _AdjustArgs(this.bytes, this.brightness, this.contrast);
   final Uint8List bytes;
   final double brightness;
   final double contrast;
@@ -30,47 +60,40 @@ class _RotateArgs {
   final int degrees;
 }
 
-/// Applies automatic and manual image enhancement to improve OCR accuracy,
-/// entirely on-device using the `image` package (no native dependency).
-/// Heavy pixel work runs on a background isolate via [compute] so the UI
-/// thread never blocks.
+/// On-device image preparation for OCR. Every operation decodes the source
+/// exactly once and runs on a background isolate, because JPEG decoding and
+/// per-pixel filtering in pure Dart are by far the most expensive things
+/// this app does.
 class ImageEnhancer {
   const ImageEnhancer();
 
-  /// Improves contrast and sharpness so handwriting is easier to recognize.
-  Future<File> autoEnhance(File source, String outputPath) async {
+  /// Builds the enhanced and binarized variants in a single isolate call
+  /// from a single decode — previously these were two calls that each
+  /// decoded the full-size photo again.
+  Future<OcrVariants> buildOcrVariants(
+    File source,
+    String enhancedPath,
+    String binarizedPath,
+  ) async {
     final bytes = await source.readAsBytes();
-    final result = await compute(_autoEnhanceBytes, bytes);
-    final output = File(outputPath);
-    await output.writeAsBytes(result, flush: true);
-    return output;
+    final result = await compute(_buildVariants, _VariantArgs(bytes));
+    await File(enhancedPath).writeAsBytes(result.enhanced, flush: true);
+    await File(binarizedPath).writeAsBytes(result.binarized, flush: true);
+    return OcrVariants(enhancedPath: enhancedPath, binarizedPath: binarizedPath);
   }
 
-  /// Produces a black-and-white version using adaptive (locally computed)
-  /// thresholding. This strips ruled lines, shadows and paper texture that
-  /// confuse recognition, and often rescues faint pencil or uneven lighting
-  /// that global adjustments can't fix.
-  Future<File> binarize(File source, String outputPath) async {
-    final bytes = await source.readAsBytes();
-    final result = await compute(_binarizeBytes, bytes);
-    final output = File(outputPath);
-    await output.writeAsBytes(result, flush: true);
-    return output;
-  }
-
-  /// Applies manual brightness/contrast on top of the original image.
+  /// Applies the brightness/contrast the user dialed in on the prepare
+  /// screen. Skipped entirely when the values are neutral.
   Future<File> applyManualAdjustments(
     File source,
     String outputPath,
     ManualAdjustments adjustments,
   ) async {
-    if (adjustments.isNeutral) {
-      return source.copy(outputPath);
-    }
+    if (adjustments.isNeutral) return source.copy(outputPath);
     final bytes = await source.readAsBytes();
     final result = await compute(
-      _applyManualAdjustments,
-      _ManualAdjustArgs(bytes, adjustments.brightness, adjustments.contrast),
+      _applyAdjustments,
+      _AdjustArgs(bytes, adjustments.brightness, adjustments.contrast),
     );
     final output = File(outputPath);
     await output.writeAsBytes(result, flush: true);
@@ -86,149 +109,190 @@ class ImageEnhancer {
   }
 }
 
-/// Decodes, bakes the EXIF orientation into the pixels (re-encoded copies
-/// lose the EXIF tag, so an un-baked photo would come out sideways), and
-/// normalizes size: huge captures are downscaled for speed while small
-/// imports are upscaled 2x because the recognizer struggles when text is
-/// only a few pixels tall.
-img.Image? _prepareBase(Uint8List bytes) {
+/// Decodes, applies EXIF orientation (re-encoded copies lose the tag, so an
+/// un-baked photo would come out sideways) and normalizes to [targetWidth].
+img.Image? _decodeAndFit(Uint8List bytes, int targetWidth) {
   final decoded = img.decodeImage(bytes);
   if (decoded == null) return null;
   var image = img.bakeOrientation(decoded);
-  // 2200px keeps handwriting comfortably above the recognizer's minimum
-  // stroke size while roughly halving per-variant pixel work compared to
-  // the previous 3200px cap — users reported multi-page batches taking
-  // most of a minute.
-  if (image.width > 2200) {
-    image = img.copyResize(image, width: 2200);
-  } else if (image.width < 1200) {
+  if (image.width > targetWidth) {
+    // `average` costs a little more than nearest-neighbour but avoids the
+    // aliasing that shreds thin pen strokes when downscaling.
+    image = img.copyResize(image, width: targetWidth, interpolation: img.Interpolation.average);
+  } else if (image.width < targetWidth ~/ 2) {
+    // Very small imports: the recognizer struggles when glyphs are only a
+    // few pixels tall.
     image = img.copyResize(image, width: image.width * 2, interpolation: img.Interpolation.cubic);
   }
   return image;
 }
 
-Uint8List _autoEnhanceBytes(Uint8List bytes) {
-  var image = _prepareBase(bytes);
-  if (image == null) return bytes;
-
-  // Grayscale removes color noise the recognizer doesn't need, then a
-  // percentile-based levels stretch adapts to the photo's actual lighting:
-  // dim, shadowed pages get pulled to full range while already-good pages
-  // are barely touched. This beats a fixed contrast multiplier, which
-  // blows out faint pencil strokes on bright pages and does too little on
-  // dark ones. The sharpen blends at low strength to avoid halo artifacts.
-  image = img.grayscale(image);
-  image = _stretchLevels(image, lowPercentile: 0.02, highPercentile: 0.98);
-  image = img.convolution(image, filter: [0, -1, 0, -1, 5, -1, 0, -1, 0], div: 1, amount: 0.3);
-  return Uint8List.fromList(img.encodeJpg(image, quality: 95));
+/// Extracts an 8-bit luminance plane. Working on this flat [Uint8List] is
+/// an order of magnitude faster than the package's per-pixel accessors,
+/// which allocate an object per pixel.
+Uint8List _luminance(img.Image image) {
+  final rgb = image.getBytes(order: img.ChannelOrder.rgb);
+  final count = image.width * image.height;
+  final gray = Uint8List(count);
+  for (var i = 0, j = 0; i < count; i++, j += 3) {
+    // Integer BT.601 luma: (77R + 150G + 29B) >> 8.
+    gray[i] = (77 * rgb[j] + 150 * rgb[j + 1] + 29 * rgb[j + 2]) >> 8;
+  }
+  return gray;
 }
 
-Uint8List _binarizeBytes(Uint8List bytes) {
-  var image = _prepareBase(bytes);
-  if (image == null) return bytes;
-  image = img.grayscale(image);
+Uint8List _encodeGray(Uint8List gray, int width, int height) {
+  final image = img.Image.fromBytes(
+    width: width,
+    height: height,
+    bytes: gray.buffer,
+    numChannels: 1,
+  );
+  return img.encodeJpg(image, quality: 88);
+}
 
-  // Adaptive mean thresholding: each pixel is compared against the average
-  // brightness of its local window (computed in O(1) per pixel via an
-  // integral image), so shadows and uneven lighting don't matter the way
-  // they would with one global threshold. The small negative offset keeps
-  // pale paper texture from being classified as ink.
+_VariantBytes _buildVariants(_VariantArgs args) {
+  final image = _decodeAndFit(args.bytes, _ocrWidth);
+  if (image == null) return _VariantBytes(args.bytes, args.bytes);
+
   final width = image.width;
   final height = image.height;
-  final integral = List<int>.filled((width + 1) * (height + 1), 0);
-  final stride = width + 1;
-  for (var y = 0; y < height; y++) {
-    var rowSum = 0;
-    for (var x = 0; x < width; x++) {
-      rowSum += image.getPixel(x, y).r.toInt();
-      integral[(y + 1) * stride + (x + 1)] = integral[y * stride + (x + 1)] + rowSum;
-    }
-  }
+  final gray = _luminance(image);
 
-  final window = (width / 16).round().clamp(15, 80);
-  const offset = 10;
-  final half = window ~/ 2;
-  for (var y = 0; y < height; y++) {
-    final y0 = (y - half).clamp(0, height - 1);
-    final y1 = (y + half).clamp(0, height - 1);
-    for (var x = 0; x < width; x++) {
-      final x0 = (x - half).clamp(0, width - 1);
-      final x1 = (x + half).clamp(0, width - 1);
-      final area = (x1 - x0 + 1) * (y1 - y0 + 1);
-      final sum = integral[(y1 + 1) * stride + (x1 + 1)] -
-          integral[y0 * stride + (x1 + 1)] -
-          integral[(y1 + 1) * stride + x0] +
-          integral[y0 * stride + x0];
-      final pixel = image.getPixel(x, y);
-      final value = pixel.r.toInt() * area < (sum - offset * area) ? 0 : 255;
-      pixel
-        ..r = value
-        ..g = value
-        ..b = value;
-    }
-  }
-  return Uint8List.fromList(img.encodeJpg(image, quality: 95));
+  final stretched = _stretchLevels(gray);
+  final binarized = _adaptiveThreshold(stretched, width, height);
+
+  return _VariantBytes(
+    _encodeGray(stretched, width, height),
+    _encodeGray(binarized, width, height),
+  );
 }
 
-/// Linearly remaps luminance so the given low/high percentiles land at
-/// 0 and 255, ignoring outlier pixels (specks, glare) that would defeat a
-/// simple min/max normalization.
-img.Image _stretchLevels(
-  img.Image image, {
-  required double lowPercentile,
-  required double highPercentile,
-}) {
-  final histogram = List<int>.filled(256, 0);
-  for (final pixel in image) {
-    histogram[pixel.r.toInt().clamp(0, 255)]++;
+/// Percentile-based levels stretch: adapts to each photo's actual lighting
+/// so dim pages are pulled to full range while good ones are barely
+/// touched. Outlier pixels (glare, specks) are ignored.
+Uint8List _stretchLevels(Uint8List gray) {
+  final histogram = Int32List(256);
+  for (var i = 0; i < gray.length; i++) {
+    histogram[gray[i]]++;
   }
-  final totalPixels = image.width * image.height;
 
-  int low = 0;
-  int cumulative = 0;
+  final total = gray.length;
+  final lowCut = (total * 0.02).round();
+  final highCut = (total * 0.02).round();
+
+  var low = 0;
+  var cumulative = 0;
   for (var i = 0; i < 256; i++) {
     cumulative += histogram[i];
-    if (cumulative >= totalPixels * lowPercentile) {
+    if (cumulative >= lowCut) {
       low = i;
       break;
     }
   }
 
-  int high = 255;
+  var high = 255;
   cumulative = 0;
   for (var i = 255; i >= 0; i--) {
     cumulative += histogram[i];
-    if (cumulative >= totalPixels * (1 - highPercentile)) {
+    if (cumulative >= highCut) {
       high = i;
       break;
     }
   }
 
-  if (high - low < 32) return image; // Nearly flat image; stretching would only amplify noise.
+  // Nearly flat image: stretching would only amplify noise.
+  if (high - low < 32) return gray;
 
+  final lookup = Uint8List(256);
   final range = high - low;
-  for (final pixel in image) {
-    final value = (((pixel.r - low) / range) * 255).clamp(0, 255).toInt();
-    pixel
-      ..r = value
-      ..g = value
-      ..b = value;
+  for (var v = 0; v < 256; v++) {
+    lookup[v] = (((v - low) * 255) ~/ range).clamp(0, 255);
   }
-  return image;
+
+  final out = Uint8List(gray.length);
+  for (var i = 0; i < gray.length; i++) {
+    out[i] = lookup[gray[i]];
+  }
+  return out;
 }
 
-Uint8List _applyManualAdjustments(_ManualAdjustArgs args) {
-  final decoded = img.decodeImage(args.bytes);
-  if (decoded == null) return args.bytes;
-  final brightnessFactor = (1.0 + (args.brightness / 100.0)).clamp(0.2, 2.0);
-  final contrastFactor = (1.0 + (args.contrast / 100.0)).clamp(0.2, 2.0);
-  final image = img.adjustColor(decoded, brightness: brightnessFactor, contrast: contrastFactor);
-  return Uint8List.fromList(img.encodeJpg(image, quality: 92));
+/// Adaptive mean thresholding over an integral image: each pixel is judged
+/// against its local neighbourhood, so shadows and uneven lighting don't
+/// wipe out whole regions the way a single global threshold would. Strips
+/// ruled lines and paper texture that confuse recognition.
+Uint8List _adaptiveThreshold(Uint8List gray, int width, int height) {
+  final stride = width + 1;
+  final integral = Int32List(stride * (height + 1));
+  for (var y = 0; y < height; y++) {
+    var rowSum = 0;
+    final rowStart = y * width;
+    final outRow = (y + 1) * stride;
+    final prevRow = y * stride;
+    for (var x = 0; x < width; x++) {
+      rowSum += gray[rowStart + x];
+      integral[outRow + x + 1] = integral[prevRow + x + 1] + rowSum;
+    }
+  }
+
+  final window = (width ~/ 16).clamp(15, 60);
+  final half = window ~/ 2;
+  const offsetPercent = 6; // Ink must be this much darker than its surroundings.
+
+  final out = Uint8List(gray.length);
+  for (var y = 0; y < height; y++) {
+    final y0 = y - half < 0 ? 0 : y - half;
+    final y1 = y + half >= height ? height - 1 : y + half;
+    final top = y0 * stride;
+    final bottom = (y1 + 1) * stride;
+    final rowStart = y * width;
+    for (var x = 0; x < width; x++) {
+      final x0 = x - half < 0 ? 0 : x - half;
+      final x1 = x + half >= width ? width - 1 : x + half;
+      final area = (x1 - x0 + 1) * (y1 - y0 + 1);
+      final sum = integral[bottom + x1 + 1] -
+          integral[top + x1 + 1] -
+          integral[bottom + x0] +
+          integral[top + x0];
+      final threshold = (sum * (100 - offsetPercent)) ~/ (area * 100);
+      out[rowStart + x] = gray[rowStart + x] < threshold ? 0 : 255;
+    }
+  }
+  return out;
+}
+
+Uint8List _applyAdjustments(_AdjustArgs args) {
+  final image = _decodeAndFit(args.bytes, _displayWidth);
+  if (image == null) return args.bytes;
+
+  final brightness = (1.0 + args.brightness / 100.0).clamp(0.2, 2.0);
+  final contrast = (1.0 + args.contrast / 100.0).clamp(0.2, 2.0);
+
+  // Precomputed lookup table: one multiply-free byte read per channel
+  // instead of recomputing the curve for every pixel.
+  final lookup = Uint8List(256);
+  for (var v = 0; v < 256; v++) {
+    final adjusted = ((v * brightness - 127.5) * contrast + 127.5).round();
+    lookup[v] = adjusted < 0 ? 0 : (adjusted > 255 ? 255 : adjusted);
+  }
+
+  final rgb = image.getBytes(order: img.ChannelOrder.rgb);
+  for (var i = 0; i < rgb.length; i++) {
+    rgb[i] = lookup[rgb[i]];
+  }
+
+  final out = img.Image.fromBytes(
+    width: image.width,
+    height: image.height,
+    bytes: rgb.buffer,
+    numChannels: 3,
+  );
+  return Uint8List.fromList(img.encodeJpg(out, quality: 90));
 }
 
 Uint8List _rotateBytes(_RotateArgs args) {
-  final decoded = img.decodeImage(args.bytes);
-  if (decoded == null) return args.bytes;
-  final rotated = img.copyRotate(decoded, angle: args.degrees);
-  return Uint8List.fromList(img.encodeJpg(rotated, quality: 92));
+  final image = _decodeAndFit(args.bytes, _displayWidth);
+  if (image == null) return args.bytes;
+  final rotated = img.copyRotate(image, angle: args.degrees);
+  return Uint8List.fromList(img.encodeJpg(rotated, quality: 90));
 }
