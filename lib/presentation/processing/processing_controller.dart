@@ -49,6 +49,31 @@ class ProcessingController extends ChangeNotifier {
   int completedSteps = 0;
   String? errorMessage;
   String? errorSuggestion;
+  bool _isCancelled = false;
+  bool _isDisposed = false;
+
+  /// Stops the pipeline at the next checkpoint. Work already handed to an
+  /// isolate finishes, but nothing further is started and no document is
+  /// saved, so the user is never trapped watching a long batch.
+  void cancel() {
+    _isCancelled = true;
+  }
+
+  /// Cancelling pops this screen and disposes the controller while the
+  /// pipeline is still unwinding, so every progress update must be a no-op
+  /// once that has happened.
+  @override
+  void notifyListeners() {
+    if (_isDisposed) return;
+    super.notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _isDisposed = true;
+    _isCancelled = true;
+    super.dispose();
+  }
 
   /// The single merged document, populated when [batchMode] is merge.
   ScanDocument? resultDocument;
@@ -56,34 +81,39 @@ class ProcessingController extends ChangeNotifier {
   /// The set of documents created, populated when [batchMode] is separate.
   List<ScanDocument> resultDocuments = const [];
 
+  /// A first-pass result at least this good means the photo was already
+  /// clear. Spending seconds building enhanced variants to maybe gain a
+  /// character or two is not worth making the user wait.
+  static const _goodEnoughConfidence = 0.70;
+  static const _goodEnoughChars = 25;
+
+  /// Threshold used when the device reports no confidence at all: a page
+  /// that yielded this much text clearly read fine.
+  static const _goodEnoughCharsNoConfidence = 80;
+
   Future<void> run() async {
-    // One step per page for enhancement (if enabled) plus one per page for
-    // recognition, so the progress bar reflects the whole pipeline and never
-    // sits still while heavy work happens off-screen.
-    final autoEnhance = _settings.imageEnhancementEnabled;
-    totalSteps = pageSpecs.length * (autoEnhance ? 2 : 1);
+    // One step per page. Enhancement is now a fallback rather than a
+    // guaranteed stage, so the count stays honest either way.
+    totalSteps = pageSpecs.length;
     completedSteps = 0;
-    stage = ProcessingStage.preparing;
+    stage = ProcessingStage.recognizing;
     notifyListeners();
 
+    final autoEnhance = _settings.imageEnhancementEnabled;
     final language = _settings.recognitionLanguage;
     final keepOriginal = _settings.keepOriginalImage;
     final now = DateTime.now();
     final pages = <ScanPage>[];
 
     try {
-      // Each page gets a set of variants for recognition to try: the
-      // (manually adjusted) capture, plus (when enhancement is on) an
-      // adaptively enhanced version and an adaptively binarized version.
-      // Different page conditions favor different variants.
-      final candidates = <List<String>>[];
       for (final spec in pageSpecs) {
+        if (_isCancelled) return;
+
         final dir = await _storage.tempDir;
         var basePath = spec.imagePath;
 
-        // Bake the user's prepare-screen brightness/contrast first so every
-        // variant (and the persisted image) reflects what they saw in the
-        // live preview.
+        // Bake the user's prepare-screen brightness/contrast first so the
+        // kept page matches the live preview they saw.
         if (!spec.adjustments.isNeutral) {
           final adjusted = await _enhancer.applyManualAdjustments(
             File(basePath),
@@ -94,67 +124,58 @@ class ProcessingController extends ChangeNotifier {
           basePath = adjusted.path;
         }
 
-        final variants = [basePath];
-        if (autoEnhance) {
-          // The two enhancement variants are independent pixel jobs; run
-          // them on parallel isolates to halve this stage's wall time.
-          final results = await Future.wait([
-            _enhancer.autoEnhance(File(basePath), '${dir.path}/${_uuid.v4()}.jpg'),
-            _enhancer.binarize(File(basePath), '${dir.path}/${_uuid.v4()}.jpg'),
-          ]);
-          variants.addAll(results.map((f) => f.path));
-        }
-        candidates.add(variants);
-        completedSteps++;
-        notifyListeners();
-      }
-
-      stage = ProcessingStage.recognizing;
-      notifyListeners();
-
-      // A pass this confident with real content won't be beaten by another
-      // variant often enough to justify the extra seconds per page.
-      const earlyExitConfidence = 0.82;
-      const earlyExitMinChars = 40;
-
-      for (final variants in candidates) {
-        final originalPath = variants.first;
         var best = RecognitionOutcome.empty;
-        var winningPath = originalPath;
         var failed = false;
+        final scratchPaths = <String>[];
+
         try {
-          for (final path in variants) {
-            final outcome = await _recognizer.tryRecognize(path, language);
-            if (outcome.score > best.score) {
-              best = outcome;
-              winningPath = path;
-            }
-            if (outcome.confidence >= earlyExitConfidence &&
-                outcome.text.replaceAll(RegExp(r'\s'), '').length >= earlyExitMinChars) {
-              break;
+          // Fast path: recognize the photo as-is. ML Kit runs natively and
+          // finishes in about a second, so a clear page never pays for any
+          // pure-Dart image processing at all.
+          best = await _recognizer.tryRecognize(basePath, language);
+
+          if (autoEnhance && !_isGoodEnough(best) && !_isCancelled) {
+            stage = ProcessingStage.preparing;
+            notifyListeners();
+
+            final variants = await _enhancer.buildOcrVariants(
+              File(basePath),
+              '${dir.path}/${_uuid.v4()}.jpg',
+              '${dir.path}/${_uuid.v4()}.jpg',
+            );
+            scratchPaths.addAll(variants.paths);
+
+            stage = ProcessingStage.recognizing;
+            notifyListeners();
+
+            for (final path in variants.paths) {
+              if (_isCancelled) return;
+              final outcome = await _recognizer.tryRecognize(path, language);
+              if (outcome.score > best.score) best = outcome;
+              if (_isGoodEnough(outcome)) break;
             }
           }
 
-          // Nothing readable in any variant: the page may simply be
-          // sideways or upside down (e.g. an import with no orientation
-          // metadata), so retry the original at each remaining rotation.
-          if (best.text.trim().isEmpty) {
-            final dir = await _storage.tempDir;
+          // Still nothing readable: the page may simply be sideways or
+          // upside down (an import with no orientation metadata), so retry
+          // at each remaining rotation.
+          if (best.text.trim().isEmpty && !_isCancelled) {
             for (final degrees in const [90, 180, 270]) {
+              if (_isCancelled) return;
               final rotated = await _enhancer.rotate(
-                File(originalPath),
+                File(basePath),
                 '${dir.path}/${_uuid.v4()}.jpg',
                 degrees,
               );
+              scratchPaths.add(rotated.path);
               final outcome = await _recognizer.tryRecognize(rotated.path, language);
               if (outcome.score > best.score) {
-                if (!variants.contains(winningPath)) {
-                  await _storage.deleteIfExists(winningPath);
-                }
                 best = outcome;
-                winningPath = rotated.path;
-              } else {
-                await _storage.deleteIfExists(rotated.path);
+                // A rotated page should be kept the way it reads.
+                await _storage.deleteIfExists(basePath);
+                basePath = rotated.path;
+                scratchPaths.remove(rotated.path);
+                break;
               }
             }
           }
@@ -164,11 +185,10 @@ class ProcessingController extends ChangeNotifier {
           failed = true;
         }
 
-        final persistedPath = await _persistPage(winningPath, keepOriginal);
-        // _persistPage works on a copy, so every working file — losing
-        // variants, a rotation-fallback original, and the winner itself —
-        // can be removed from temp storage.
-        for (final path in {...variants, winningPath}) {
+        // Always keep the real photo, never a derived black-and-white or
+        // levels-stretched variant — those exist only to be read.
+        final persistedPath = await _persistPage(basePath, keepOriginal);
+        for (final path in {...scratchPaths, basePath}) {
           await _storage.deleteIfExists(path);
         }
 
@@ -182,6 +202,8 @@ class ProcessingController extends ChangeNotifier {
         completedSteps++;
         notifyListeners();
       }
+
+      if (_isCancelled) return;
 
       stage = ProcessingStage.saving;
       notifyListeners();
@@ -223,6 +245,15 @@ class ProcessingController extends ChangeNotifier {
       errorSuggestion = e is AppException ? e.suggestion : 'Please try again.';
     }
     notifyListeners();
+  }
+
+  bool _isGoodEnough(RecognitionOutcome outcome) {
+    if (outcome.characterCount < _goodEnoughChars) return false;
+    // Some devices don't report confidence at all; judging those pages by
+    // confidence alone would disable the fast path entirely and make every
+    // scan pay for enhancement it probably doesn't need.
+    if (!outcome.hasConfidence) return outcome.characterCount >= _goodEnoughCharsNoConfidence;
+    return outcome.confidence >= _goodEnoughConfidence;
   }
 
   Future<String> _persistPage(String workingPath, bool keepOriginal) async {

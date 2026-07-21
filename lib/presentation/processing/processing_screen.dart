@@ -42,12 +42,23 @@ class ProcessingScreen extends StatelessWidget {
 class _ProcessingView extends StatelessWidget {
   const _ProcessingView();
 
+  void _cancel(BuildContext context) {
+    context.read<ProcessingController>().cancel();
+    Navigator.of(context).popUntil((r) => r.settings.name == AppRoutes.home);
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<ProcessingController>();
 
+    final isBusy = controller.stage != ProcessingStage.done && controller.stage != ProcessingStage.failed;
+
     return PopScope(
-      canPop: controller.stage == ProcessingStage.done || controller.stage == ProcessingStage.failed,
+      canPop: !isBusy,
+      onPopInvokedWithResult: (didPop, _) {
+        // Back during processing cancels rather than being ignored.
+        if (!didPop) _cancel(context);
+      },
       child: Scaffold(
         appBar: AppBar(title: const Text('Recognizing'), automaticallyImplyLeading: false),
         body: SafeArea(
@@ -95,13 +106,18 @@ class _ProcessingView extends StatelessWidget {
             Text(stageLabel, style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: AppSpacing.xs),
             Text(
-              // completedSteps counts finished work, so the step currently
-              // running is the next one — without the +1 users saw the
-              // confusing "Step 0 of N" at the start.
+              // completedSteps counts finished work, so the page currently
+              // being read is the next one — without the +1 users saw the
+              // confusing "Page 0 of N" at the start.
               total > 1
-                  ? 'Step ${(controller.completedSteps + 1).clamp(1, total)} of $total'
+                  ? 'Page ${(controller.completedSteps + 1).clamp(1, total)} of $total'
                   : 'This only takes a moment',
               style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: AppSpacing.xl),
+            TextButton(
+              onPressed: () => _cancel(context),
+              child: const Text('Cancel'),
             ),
           ],
         );
