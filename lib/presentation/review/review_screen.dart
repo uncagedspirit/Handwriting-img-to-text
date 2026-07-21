@@ -8,10 +8,12 @@ import '../../core/theme/app_spacing.dart';
 import '../../core/widgets/app_snackbar.dart';
 import '../../core/widgets/confirm_dialog.dart';
 import '../../core/widgets/empty_state.dart';
+import '../../core/widgets/rename_dialog.dart';
 import '../../data/repositories/history_repository.dart';
 import '../../data/repositories/settings_repository.dart';
 import '../../domain/entities/scan_document.dart';
 import '../export/export_sheet.dart';
+import 'find_replace_sheet.dart';
 import 'review_controller.dart';
 
 class ReviewScreen extends StatelessWidget {
@@ -56,81 +58,23 @@ class _ReviewView extends StatelessWidget {
 
   Future<void> _rename(BuildContext context) async {
     final controller = context.read<ReviewController>();
-    final textController = TextEditingController(text: controller.document.title);
-    final newTitle = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Rename Document'),
-        content: TextField(controller: textController, autofocus: true),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(textController.text),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-    if (newTitle != null && newTitle.trim().isNotEmpty) {
-      await controller.rename(newTitle);
-    }
+    final newTitle = await showRenameDialog(context, controller.document.title);
+    if (newTitle != null) await controller.rename(newTitle);
   }
 
   Future<void> _searchReplace(BuildContext context) async {
     final controller = context.read<ReviewController>();
-    final searchController = TextEditingController();
-    final replaceController = TextEditingController();
-    final count = await showModalBottomSheet<int>(
-      context: context,
-      isScrollControlled: true,
-      builder: (sheetContext) => Padding(
-        padding: EdgeInsets.only(
-          left: AppSpacing.lg,
-          right: AppSpacing.lg,
-          top: AppSpacing.lg,
-          bottom: MediaQuery.of(sheetContext).viewInsets.bottom + AppSpacing.lg,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Find & Replace', style: Theme.of(sheetContext).textTheme.titleLarge),
-            const SizedBox(height: AppSpacing.md),
-            TextField(
-              controller: searchController,
-              autofocus: true,
-              decoration: const InputDecoration(hintText: 'Find'),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            TextField(
-              controller: replaceController,
-              decoration: const InputDecoration(hintText: 'Replace with'),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: () {
-                  final replaced = controller.replaceAll(searchController.text, replaceController.text);
-                  Navigator.of(sheetContext).pop(replaced);
-                },
-                style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
-                child: const Text('Replace All'),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    final request = await showFindReplaceSheet(context);
+    if (request == null || !context.mounted) return;
+
+    final count = controller.replaceAll(request.search, request.replacement);
     // Feedback must use the screen's own context: the sheet's context is
     // deactivated once it pops, which previously made the result toast
     // silently fail.
-    if (count != null && context.mounted) {
-      AppSnackBar.info(
-        context,
-        count == 0 ? 'No matches found' : 'Replaced $count occurrence${count == 1 ? '' : 's'}',
-      );
-    }
+    AppSnackBar.info(
+      context,
+      count == 0 ? 'No matches found' : 'Replaced $count occurrence${count == 1 ? '' : 's'}',
+    );
   }
 
   Future<void> _delete(BuildContext context) async {
@@ -148,11 +92,60 @@ class _ReviewView extends StatelessWidget {
     }
   }
 
+  /// Guards against silently discarding edits. Returns true when it is safe
+  /// to leave the screen.
+  Future<bool> _confirmDiscard(BuildContext context) async {
+    final controller = context.read<ReviewController>();
+    if (!controller.isDirty) return true;
+
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Save changes?'),
+        content: const Text('You have edits that have not been saved yet.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop('discard'),
+            style: TextButton.styleFrom(foregroundColor: AppColors.error),
+            child: const Text('Discard'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop('cancel'),
+            child: const Text('Keep editing'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop('save'),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    if (choice == 'save') {
+      await controller.save();
+      return true;
+    }
+    return choice == 'discard';
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<ReviewController>();
     final document = controller.document;
 
+    return PopScope(
+      canPop: !controller.isDirty,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        if (await _confirmDiscard(context) && context.mounted) {
+          Navigator.of(context).pop();
+        }
+      },
+      child: _buildScaffold(context, controller, document),
+    );
+  }
+
+  Widget _buildScaffold(BuildContext context, ReviewController controller, ScanDocument document) {
     return Scaffold(
       appBar: AppBar(
         title: GestureDetector(
