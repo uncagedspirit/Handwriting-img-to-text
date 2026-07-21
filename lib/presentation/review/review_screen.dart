@@ -162,9 +162,11 @@ class _ReviewView extends StatelessWidget {
         actions: [
           IconButton(
             tooltip: 'Share',
+            // The live editor text, not the last saved copy — sharing after
+            // an unsaved edit previously sent the stale version.
             onPressed: () => quickShare(
               context,
-              text: controller.document.displayText,
+              text: controller.textController.text,
               fileName: controller.document.title,
             ),
             icon: const Icon(Icons.share_outlined),
@@ -202,14 +204,38 @@ class _ReviewView extends StatelessWidget {
             if (controller.hasKeptImages)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-                child: SegmentedButton<ReviewViewMode>(
-                  segments: const [
-                    ButtonSegment(value: ReviewViewMode.text, label: Text('Text'), icon: Icon(Icons.notes)),
-                    ButtonSegment(value: ReviewViewMode.split, label: Text('Compare'), icon: Icon(Icons.vertical_split)),
-                    ButtonSegment(value: ReviewViewMode.image, label: Text('Original'), icon: Icon(Icons.image_outlined)),
-                  ],
-                  selected: {controller.viewMode},
-                  onSelectionChanged: (s) => controller.setViewMode(s.first),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    // Icons plus labels don't fit on narrow phones once the
+                    // system font scale is turned up, so drop to icon-only
+                    // (tooltipped) segments rather than overflowing.
+                    final compact = constraints.maxWidth < 340 * MediaQuery.textScalerOf(context).scale(1);
+                    return SegmentedButton<ReviewViewMode>(
+                      showSelectedIcon: false,
+                      segments: [
+                        ButtonSegment(
+                          value: ReviewViewMode.text,
+                          label: compact ? null : const Text('Text'),
+                          icon: const Icon(Icons.notes),
+                          tooltip: 'Text only',
+                        ),
+                        ButtonSegment(
+                          value: ReviewViewMode.split,
+                          label: compact ? null : const Text('Compare'),
+                          icon: const Icon(Icons.vertical_split),
+                          tooltip: 'Compare with original',
+                        ),
+                        ButtonSegment(
+                          value: ReviewViewMode.image,
+                          label: compact ? null : const Text('Original'),
+                          icon: const Icon(Icons.image_outlined),
+                          tooltip: 'Original page',
+                        ),
+                      ],
+                      selected: {controller.viewMode},
+                      onSelectionChanged: (s) => controller.setViewMode(s.first),
+                    );
+                  },
                 ),
               ),
             if (document.hasAnyFailure)
@@ -382,26 +408,43 @@ class _BottomActions extends StatelessWidget {
               ],
             ),
           ),
-          const Spacer(),
-          FilledButton.icon(
-            onPressed: () async {
-              await controller.save();
-              if (context.mounted) AppSnackBar.success(context, 'Saved');
-            },
-            style: FilledButton.styleFrom(backgroundColor: AppColors.primaryLight, foregroundColor: AppColors.primary),
-            icon: const Icon(Icons.save_outlined),
-            label: const Text('Save'),
+          const SizedBox(width: AppSpacing.sm),
+          // Expanded rather than a Spacer plus intrinsic-width buttons: at
+          // large system font sizes or on narrow screens the old fixed
+          // layout overflowed the bar.
+          Expanded(
+            child: FilledButton.icon(
+              // Disabled when there is nothing to save, so the button also
+              // communicates whether edits are still pending.
+              onPressed: controller.isDirty
+                  ? () async {
+                      await controller.save();
+                      if (context.mounted) AppSnackBar.success(context, 'Saved');
+                    }
+                  : null,
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.primaryLight,
+                foregroundColor: AppColors.primary,
+              ),
+              icon: Icon(controller.isDirty ? Icons.save_outlined : Icons.check),
+              label: Text(
+                controller.isDirty ? 'Save' : 'Saved',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
           ),
           const SizedBox(width: AppSpacing.sm),
-          FilledButton.icon(
-            onPressed: () => showExportSheet(
-              context,
-              text: controller.document.displayText,
-              fileName: controller.document.title,
+          Expanded(
+            child: FilledButton.icon(
+              onPressed: () => showExportSheet(
+                context,
+                text: controller.textController.text,
+                fileName: controller.document.title,
+              ),
+              style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
+              icon: const Icon(Icons.ios_share_outlined),
+              label: const Text('Export', overflow: TextOverflow.ellipsis),
             ),
-            style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
-            icon: const Icon(Icons.ios_share_outlined),
-            label: const Text('Export'),
           ),
         ],
       ),
