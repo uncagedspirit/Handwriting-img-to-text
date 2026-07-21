@@ -5,20 +5,31 @@ import '../../domain/entities/app_enums.dart';
 
 /// The result of one recognition pass over one image variant.
 class RecognitionOutcome {
-  const RecognitionOutcome({required this.text, required this.confidence});
+  const RecognitionOutcome({
+    required this.text,
+    required this.confidence,
+    required this.hasConfidence,
+  });
 
-  static const empty = RecognitionOutcome(text: '', confidence: 0);
+  static const empty = RecognitionOutcome(text: '', confidence: 0, hasConfidence: false);
 
   final String text;
 
   /// 0..1, character-weighted mean of ML Kit's per-line confidence.
   final double confidence;
 
+  /// Whether ML Kit actually reported confidence values. Some devices and
+  /// model versions leave them null, in which case [confidence] is a
+  /// neutral placeholder and callers must judge by content alone.
+  final bool hasConfidence;
+
+  int get characterCount => text.replaceAll(RegExp(r'\s'), '').length;
+
   /// Comparable quality score: the amount of recognized content, weighted
   /// by how sure the engine was about it. Confidence contributes at half
   /// strength so a marginally-more-confident pass can't beat one that
   /// actually read substantially more of the page.
-  double get score => text.replaceAll(RegExp(r'\s'), '').length * (0.5 + confidence / 2);
+  double get score => characterCount * (0.5 + confidence / 2);
 }
 
 /// Wraps Google ML Kit's on-device text recognizer. Recognition is fully
@@ -62,6 +73,7 @@ class TextRecognitionDataSource {
       return RecognitionOutcome(
         text: _composeText(result),
         confidence: _averageConfidence(result),
+        hasConfidence: _reportsConfidence(result),
       );
     } catch (_) {
       throw const AppException(
@@ -69,6 +81,16 @@ class TextRecognitionDataSource {
         suggestion: 'Make sure the image is clear and try again.',
       );
     }
+  }
+
+  /// Whether any line came back with a real confidence value.
+  bool _reportsConfidence(RecognizedText result) {
+    for (final block in result.blocks) {
+      for (final line in block.lines) {
+        if (line.confidence != null) return true;
+      }
+    }
+    return false;
   }
 
   /// Character-weighted mean of ML Kit's per-line confidence, so long
