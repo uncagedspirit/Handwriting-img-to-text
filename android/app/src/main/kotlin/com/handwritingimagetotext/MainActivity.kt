@@ -1,4 +1,4 @@
-package com.handwriting.texter.handwriting_to_text
+package com.handwritingimagetotext
 
 import android.content.ContentValues
 import android.os.Build

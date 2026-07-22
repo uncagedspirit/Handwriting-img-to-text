@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'core/analytics/analytics_service.dart';
 import 'core/constants/app_config.dart';
 import 'core/di/service_locator.dart';
 import 'core/routing/app_router.dart';
@@ -14,7 +15,7 @@ class HandwritingApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
-      create: (_) => SettingsController(locator<SettingsRepository>()),
+      create: (_) => SettingsController(locator<SettingsRepository>(), locator<AnalyticsService>()),
       child: Consumer<SettingsController>(
         builder: (context, settings, _) {
           return MaterialApp(
@@ -25,6 +26,8 @@ class HandwritingApp extends StatelessWidget {
             themeMode: settings.themeMode,
             initialRoute: settings.onboardingSeen ? AppRoutes.home : AppRoutes.onboarding,
             onGenerateRoute: AppRouter.onGenerateRoute,
+            // Records anonymous screen-view events (no content).
+            navigatorObservers: [locator<AnalyticsService>().navigatorObserver()],
           );
         },
       ),

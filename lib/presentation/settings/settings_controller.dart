@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
+import '../../core/analytics/analytics_service.dart';
 import '../../data/repositories/settings_repository.dart';
 import '../../domain/entities/app_enums.dart';
 
 /// Exposes user preferences to the UI and persists changes immediately.
 /// Also drives the app's [ThemeMode] so toggling dark mode applies instantly.
 class SettingsController extends ChangeNotifier {
-  SettingsController(this._repository);
+  SettingsController(this._repository, this._analytics);
 
   final SettingsRepository _repository;
+  final AnalyticsService _analytics;
 
   RecognitionLanguage get recognitionLanguage => _repository.recognitionLanguage;
   ExportFormat get defaultExportFormat => _repository.defaultExportFormat;
@@ -17,6 +19,7 @@ class SettingsController extends ChangeNotifier {
   bool get imageEnhancementEnabled => _repository.imageEnhancementEnabled;
   bool get defaultShareAsPlainText => _repository.defaultShareAsPlainText;
   bool get exportToDownloads => _repository.exportToDownloads;
+  bool get analyticsEnabled => _repository.analyticsEnabled;
   bool get onboardingSeen => _repository.onboardingSeen;
 
   ThemeMode get themeMode {
@@ -67,6 +70,13 @@ class SettingsController extends ChangeNotifier {
 
   Future<void> setExportToDownloads(bool value) async {
     await _repository.setExportToDownloads(value);
+    notifyListeners();
+  }
+
+  Future<void> setAnalyticsEnabled(bool value) async {
+    await _repository.setAnalyticsEnabled(value);
+    // Apply immediately so opting out stops collection without a restart.
+    await _analytics.setEnabled(value);
     notifyListeners();
   }
 

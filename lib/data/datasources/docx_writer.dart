@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:archive/archive.dart';
+import '../../core/constants/app_config.dart';
 
 /// Builds a minimal, valid `.docx` (Office Open XML) file from plain text,
 /// without depending on a heavyweight document-authoring package. Each line
@@ -43,7 +44,7 @@ class DocxWriter {
   String _coreXml(String title) => '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/">
 <dc:title>${_escape(title)}</dc:title>
-<dc:creator>Handwriting to Text</dc:creator>
+<dc:creator>${_escape(AppConfig.appName)}</dc:creator>
 </cp:coreProperties>''';
 
   String _documentXml(String text) {

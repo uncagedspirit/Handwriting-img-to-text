@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import '../../core/analytics/analytics_service.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_spacing.dart';
@@ -72,6 +74,7 @@ class _ExportSheet extends StatelessWidget {
         format,
         copyToDownloads: settings.exportToDownloads,
       );
+      unawaited(locator<AnalyticsService>().logExport(format: format.extension));
       if (!context.mounted) return;
       AppSnackBar.success(context, 'Saved as ${format.label}');
       await repo.shareFile(file);

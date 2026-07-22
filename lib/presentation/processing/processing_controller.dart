@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
+import '../../core/analytics/analytics_service.dart';
 import '../../core/utils/app_exception.dart';
 import '../../core/utils/file_storage.dart';
 import '../../core/utils/image_enhancer.dart';
@@ -27,11 +29,13 @@ class ProcessingController extends ChangeNotifier {
     required SettingsRepository settingsRepository,
     required FileStorage fileStorage,
     required ImageEnhancer imageEnhancer,
+    required AnalyticsService analytics,
   })  : _recognizer = recognizer,
         _history = historyRepository,
         _settings = settingsRepository,
         _storage = fileStorage,
-        _enhancer = imageEnhancer;
+        _enhancer = imageEnhancer,
+        _analytics = analytics;
 
   final List<PageSpec> pageSpecs;
   final String documentTitle;
@@ -42,6 +46,7 @@ class ProcessingController extends ChangeNotifier {
   final SettingsRepository _settings;
   final FileStorage _storage;
   final ImageEnhancer _enhancer;
+  final AnalyticsService _analytics;
   final _uuid = const Uuid();
 
   ProcessingStage stage = ProcessingStage.preparing;
@@ -272,6 +277,14 @@ class ProcessingController extends ChangeNotifier {
       }
 
       stage = ProcessingStage.done;
+
+      // Anonymous outcome metric — page count, script and whether any page
+      // failed. Never the recognized text or image.
+      unawaited(_analytics.logRecognitionCompleted(
+        pageCount: pages.length,
+        languageCode: language.code,
+        hadFailure: pages.any((p) => p.hasRecognitionFailed),
+      ));
     } catch (e) {
       stage = ProcessingStage.failed;
       errorMessage = e is AppException ? e.message : 'Something went wrong while processing your pages.';

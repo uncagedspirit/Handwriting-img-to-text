@@ -1,3 +1,5 @@
+import 'package:firebase_analytics/firebase_analytics.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'app.dart';
 import 'core/di/service_locator.dart';
@@ -5,7 +7,19 @@ import 'core/theme/app_colors.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await setupLocator();
+
+  // Firebase powers anonymous usage analytics. If it can't initialize (e.g.
+  // Play Services unavailable), the app must still run fully offline, so a
+  // failure here is non-fatal and analytics is simply disabled.
+  FirebaseAnalytics? analytics;
+  try {
+    await Firebase.initializeApp();
+    analytics = FirebaseAnalytics.instance;
+  } catch (e, s) {
+    debugPrint('Firebase init skipped: $e\n$s');
+  }
+
+  await setupLocator(analytics: analytics);
 
   // Never show Flutter's raw red/grey error screen to end users: fall back
   // to a plain-language message instead, per the app's error-handling policy.

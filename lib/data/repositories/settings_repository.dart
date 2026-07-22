@@ -17,6 +17,7 @@ class SettingsRepository {
   static const _kShareAsText = 'settings.defaultShareAsPlainText';
   static const _kOnboardingSeen = 'settings.onboardingSeen';
   static const _kExportToDownloads = 'settings.exportToDownloads';
+  static const _kAnalyticsEnabled = 'settings.analyticsEnabled';
 
   RecognitionLanguage get recognitionLanguage =>
       RecognitionLanguage.fromCode(_prefs.getString(_kLanguage) ?? RecognitionLanguage.latin.code);
@@ -64,4 +65,11 @@ class SettingsRepository {
   bool get exportToDownloads => _prefs.getBool(_kExportToDownloads) ?? true;
 
   Future<void> setExportToDownloads(bool value) => _prefs.setBool(_kExportToDownloads, value);
+
+  /// When true, the app sends anonymous usage metrics via Firebase
+  /// Analytics. Never includes document content, images, or recognized
+  /// text. Users can opt out in Settings.
+  bool get analyticsEnabled => _prefs.getBool(_kAnalyticsEnabled) ?? true;
+
+  Future<void> setAnalyticsEnabled(bool value) => _prefs.setBool(_kAnalyticsEnabled, value);
 }

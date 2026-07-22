@@ -118,6 +118,20 @@ class SettingsScreen extends StatelessWidget {
               ],
             ),
             const SizedBox(height: AppSpacing.lg),
+            const SectionHeader(title: 'Privacy'),
+            const SizedBox(height: AppSpacing.sm),
+            _SettingsCard(
+              children: [
+                _SwitchTile(
+                  icon: Icons.insights_outlined,
+                  title: 'Share Anonymous Usage Data',
+                  subtitle: 'Helps improve the app. Never includes your documents or text.',
+                  value: settings.analyticsEnabled,
+                  onChanged: settings.setAnalyticsEnabled,
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.lg),
             const SectionHeader(title: 'About'),
             const SizedBox(height: AppSpacing.sm),
             _SettingsCard(

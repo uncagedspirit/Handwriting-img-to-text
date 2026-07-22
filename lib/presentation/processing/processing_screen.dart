@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../core/analytics/analytics_service.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/routing/app_router.dart';
 import '../../core/routing/app_routes.dart';
@@ -33,6 +34,7 @@ class ProcessingScreen extends StatelessWidget {
         settingsRepository: locator<SettingsRepository>(),
         fileStorage: locator<FileStorage>(),
         imageEnhancer: locator<ImageEnhancer>(),
+        analytics: locator<AnalyticsService>(),
       )..run(),
       child: const _ProcessingView(),
     );

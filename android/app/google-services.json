@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "888520962109",
+    "project_id": "handwriting-image-to-text",
+    "storage_bucket": "handwriting-image-to-text.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:888520962109:android:f9acd1f8e850d61a237a54",
+        "android_client_info": {
+          "package_name": "com.handwritingimagetotext"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCHu4VFa5bf7rTcFQKDVAhkRqK6chYGoSY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
