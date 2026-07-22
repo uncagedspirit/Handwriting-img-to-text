@@ -45,12 +45,35 @@ class ProcessingController extends ChangeNotifier {
   final _uuid = const Uuid();
 
   ProcessingStage stage = ProcessingStage.preparing;
-  int totalSteps = 0;
-  int completedSteps = 0;
+
+  /// Overall completion, 0..1, advanced through sub-steps within each page
+  /// so the bar moves smoothly instead of jumping page-to-page. Monotonic —
+  /// it never slides backward.
+  double progress = 0;
+
+  /// Plain-language description of the work happening right now.
+  String phaseLabel = 'Getting ready';
+
+  /// 1-based index of the page currently being worked on.
+  int currentPageNumber = 0;
+
+  int get totalPages => pageSpecs.length;
+
   String? errorMessage;
   String? errorSuggestion;
   bool _isCancelled = false;
   bool _isDisposed = false;
+
+  /// Reports progress at a fractional point [withinPage] (0..1) through the
+  /// page at [pageIndex], mapped onto the overall bar.
+  void _report(int pageIndex, double withinPage, String label) {
+    if (totalPages == 0) return;
+    final overall = (pageIndex + withinPage.clamp(0.0, 1.0)) / totalPages;
+    if (overall > progress) progress = overall;
+    phaseLabel = label;
+    currentPageNumber = pageIndex + 1;
+    notifyListeners();
+  }
 
   /// Stops the pipeline at the next checkpoint. Work already handed to an
   /// isolate finishes, but nothing further is started and no document is
@@ -92,12 +115,9 @@ class ProcessingController extends ChangeNotifier {
   static const _goodEnoughCharsNoConfidence = 80;
 
   Future<void> run() async {
-    // One step per page. Enhancement is now a fallback rather than a
-    // guaranteed stage, so the count stays honest either way.
-    totalSteps = pageSpecs.length;
-    completedSteps = 0;
+    progress = 0;
     stage = ProcessingStage.recognizing;
-    notifyListeners();
+    _report(0, 0, totalPages > 1 ? 'Reading page 1' : 'Reading your handwriting');
 
     final autoEnhance = _settings.imageEnhancementEnabled;
     final language = _settings.recognitionLanguage;
@@ -106,8 +126,10 @@ class ProcessingController extends ChangeNotifier {
     final pages = <ScanPage>[];
 
     try {
-      for (final spec in pageSpecs) {
+      for (var i = 0; i < pageSpecs.length; i++) {
         if (_isCancelled) return;
+        final spec = pageSpecs[i];
+        final pageLabel = totalPages > 1 ? ' page ${i + 1}' : ' your handwriting';
 
         final dir = await _storage.tempDir;
         var basePath = spec.imagePath;
@@ -115,6 +137,7 @@ class ProcessingController extends ChangeNotifier {
         // Bake the user's prepare-screen brightness/contrast first so the
         // kept page matches the live preview they saw.
         if (!spec.adjustments.isNeutral) {
+          _report(i, 0.05, 'Applying your adjustments');
           final adjusted = await _enhancer.applyManualAdjustments(
             File(basePath),
             '${dir.path}/${_uuid.v4()}.jpg',
@@ -132,11 +155,14 @@ class ProcessingController extends ChangeNotifier {
           // Fast path: recognize the photo as-is. ML Kit runs natively and
           // finishes in about a second, so a clear page never pays for any
           // pure-Dart image processing at all.
+          _report(i, 0.15, 'Reading$pageLabel');
+          stage = ProcessingStage.recognizing;
           best = await _recognizer.tryRecognize(basePath, language);
+          _report(i, 0.4, 'Reading$pageLabel');
 
           if (autoEnhance && !_isGoodEnough(best) && !_isCancelled) {
             stage = ProcessingStage.preparing;
-            notifyListeners();
+            _report(i, 0.5, 'Sharpening$pageLabel');
 
             final variants = await _enhancer.buildOcrVariants(
               File(basePath),
@@ -146,12 +172,15 @@ class ProcessingController extends ChangeNotifier {
             scratchPaths.addAll(variants.paths);
 
             stage = ProcessingStage.recognizing;
-            notifyListeners();
+            _report(i, 0.65, 'Reading$pageLabel again');
 
+            var read = 0;
             for (final path in variants.paths) {
               if (_isCancelled) return;
               final outcome = await _recognizer.tryRecognize(path, language);
               if (outcome.score > best.score) best = outcome;
+              read++;
+              _report(i, 0.65 + 0.2 * (read / variants.paths.length), 'Reading$pageLabel again');
               if (_isGoodEnough(outcome)) break;
             }
           }
@@ -160,6 +189,7 @@ class ProcessingController extends ChangeNotifier {
           // upside down (an import with no orientation metadata), so retry
           // at each remaining rotation.
           if (best.text.trim().isEmpty && !_isCancelled) {
+            _report(i, 0.85, 'Checking page orientation');
             for (final degrees in const [90, 180, 270]) {
               if (_isCancelled) return;
               final rotated = await _enhancer.rotate(
@@ -185,6 +215,8 @@ class ProcessingController extends ChangeNotifier {
           failed = true;
         }
 
+        _report(i, 0.95, 'Finishing$pageLabel');
+
         // Always keep the real photo, never a derived black-and-white or
         // levels-stretched variant — those exist only to be read.
         final persistedPath = await _persistPage(basePath, keepOriginal);
@@ -199,13 +231,14 @@ class ProcessingController extends ChangeNotifier {
           hasRecognitionFailed: failed,
         ));
 
-        completedSteps++;
-        notifyListeners();
+        _report(i, 1.0, 'Finishing$pageLabel');
       }
 
       if (_isCancelled) return;
 
       stage = ProcessingStage.saving;
+      phaseLabel = 'Saving your document';
+      progress = 1;
       notifyListeners();
 
       if (batchMode == BatchMode.merge) {

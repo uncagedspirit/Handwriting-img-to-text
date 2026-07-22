@@ -78,48 +78,12 @@ class _ProcessingView extends StatelessWidget {
       case ProcessingStage.preparing:
       case ProcessingStage.recognizing:
       case ProcessingStage.saving:
-        final total = controller.totalSteps;
-        final progress = total == 0 ? 0.0 : controller.completedSteps / total;
-        final stageLabel = switch (controller.stage) {
-          ProcessingStage.preparing => 'Enhancing your pages',
-          ProcessingStage.saving => 'Saving your document',
-          _ => 'Reading your handwriting',
-        };
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              width: 96,
-              height: 96,
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  CircularProgressIndicator(
-                    value: total > 0 ? progress : null,
-                    strokeWidth: 5,
-                  ),
-                  const Icon(Icons.document_scanner_outlined, color: AppColors.primary, size: 32),
-                ],
-              ),
-            ),
-            const SizedBox(height: AppSpacing.xl),
-            Text(stageLabel, style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: AppSpacing.xs),
-            Text(
-              // completedSteps counts finished work, so the page currently
-              // being read is the next one — without the +1 users saw the
-              // confusing "Page 0 of N" at the start.
-              total > 1
-                  ? 'Page ${(controller.completedSteps + 1).clamp(1, total)} of $total'
-                  : 'This only takes a moment',
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
-            const SizedBox(height: AppSpacing.xl),
-            TextButton(
-              onPressed: () => _cancel(context),
-              child: const Text('Cancel'),
-            ),
-          ],
+        return _ProgressView(
+          progress: controller.progress,
+          phaseLabel: controller.phaseLabel,
+          pageNumber: controller.currentPageNumber,
+          totalPages: controller.totalPages,
+          onCancel: () => _cancel(context),
         );
 
       case ProcessingStage.failed:
@@ -135,6 +99,140 @@ class _ProcessingView extends StatelessWidget {
       case ProcessingStage.done:
         return _DoneView(controller: controller);
     }
+  }
+}
+
+/// Engaging processing UI: a ring around a live percentage that counts up
+/// smoothly (the number animates between the controller's discrete
+/// sub-step updates so it never sits frozen), plus a phase label and a
+/// linear bar.
+class _ProgressView extends StatelessWidget {
+  const _ProgressView({
+    required this.progress,
+    required this.phaseLabel,
+    required this.pageNumber,
+    required this.totalPages,
+    required this.onCancel,
+  });
+
+  final double progress;
+  final String phaseLabel;
+  final int pageNumber;
+  final int totalPages;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final trackColor = theme.brightness == Brightness.dark
+        ? AppColors.darkSurfaceMuted
+        : AppColors.lightSurfaceMuted;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // The whole dial animates toward each new target over ~450ms, so
+        // both the ring and the counter move continuously rather than
+        // snapping between sub-steps.
+        TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0, end: progress.clamp(0.0, 1.0)),
+          duration: const Duration(milliseconds: 450),
+          curve: Curves.easeOut,
+          builder: (context, value, _) {
+            final percent = (value * 100).round();
+            return SizedBox(
+              width: 160,
+              height: 160,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  SizedBox.expand(
+                    child: CircularProgressIndicator(
+                      value: value,
+                      strokeWidth: 10,
+                      strokeCap: StrokeCap.round,
+                      backgroundColor: trackColor,
+                      valueColor: const AlwaysStoppedAnimation(AppColors.primary),
+                    ),
+                  ),
+                  // Kept inside the ring at any system font scale.
+                  SizedBox(
+                    width: 116,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.baseline,
+                        textBaseline: TextBaseline.alphabetic,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '$percent',
+                            style: theme.textTheme.headlineLarge?.copyWith(
+                              fontSize: 46,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                          Text(
+                            '%',
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              color: AppColors.primary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: AppSpacing.xl),
+        // Phase text swaps with a soft fade so it reads as a live status,
+        // not a flicker.
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 250),
+          child: Text(
+            phaseLabel,
+            key: ValueKey(phaseLabel),
+            style: theme.textTheme.titleLarge,
+            textAlign: TextAlign.center,
+          ),
+        ),
+        if (totalPages > 1) ...[
+          const SizedBox(height: AppSpacing.xs),
+          Text('Page ${pageNumber.clamp(1, totalPages)} of $totalPages', style: theme.textTheme.bodyMedium),
+        ],
+        const SizedBox(height: AppSpacing.lg),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 320),
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0, end: progress.clamp(0.0, 1.0)),
+            duration: const Duration(milliseconds: 450),
+            curve: Curves.easeOut,
+            builder: (context, value, _) => ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadius.pill),
+              child: LinearProgressIndicator(
+                value: value,
+                minHeight: 8,
+                backgroundColor: trackColor,
+                valueColor: const AlwaysStoppedAnimation(AppColors.primary),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: AppSpacing.md),
+        Text(
+          'Everything runs on your device.',
+          style: theme.textTheme.labelMedium,
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: AppSpacing.lg),
+        TextButton(onPressed: onCancel, child: const Text('Cancel')),
+      ],
+    );
   }
 }
 
