@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.0.1
+
+Bug fixes and performance improvements.
+
+### Recognition
+- Dramatically faster processing — a clear page is now read in seconds
+  instead of minutes, and image enhancement only runs when a page actually
+  needs it.
+- More accurate results: text is rebuilt in proper reading order, and pages
+  that read poorly are automatically retried with enhancement and rotation.
+- A smooth, numerical progress indicator replaces the old spinner, with a
+  live phase label and a cancel option.
+
+### Editing and export
+- Fixed the crop tool crashing the app.
+- Brightness and contrast now preview live instead of appearing to do
+  nothing.
+- Undo, redo, select all, and find & replace now work reliably.
+- Editing is no longer discarded when leaving the review screen without
+  saving.
+- Export and share now use your latest edits, handle documents with special
+  characters in the title, and no longer overwrite earlier exports.
+- Exported files reliably appear in your Downloads folder.
+
+### History and storage
+- Deleting a document now also removes its stored page images, and a new
+  "Clear All History" option lets you reclaim space.
+- Scans are given distinct, time-stamped names so they're easy to tell
+  apart.
+
+### Other
+- Faster, lighter document lists (thumbnails no longer load full-size
+  images).
+- Added an anonymous usage-data setting so you can opt out at any time.
+- New app icon.
+
 ## 1.0.0
 
 Initial release.

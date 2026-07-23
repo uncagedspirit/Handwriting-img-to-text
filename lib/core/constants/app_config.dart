@@ -7,7 +7,7 @@ class AppConfig {
   AppConfig._();
 
   static const String appName = 'Handwriting Image to Text';
-  static const String appVersion = '1.0.0';
+  static const String appVersion = '1.0.1';
 
   /// Folder name (under the app's document directory) where kept original
   /// images and exported files are stored.
